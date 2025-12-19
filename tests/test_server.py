@@ -10,6 +10,7 @@ from inline_dialogue_mcp.server import (
     SLASH_COMMENT_EXTENSIONS,
     compute_thread_id,
     find_all_threads,
+    find_git_root,
     find_thread_by_id,
     find_thread_location,
     find_threads_in_file,
@@ -820,3 +821,47 @@ class TestGetThreadsWithInlineComments:
         assert reply_result["success"] is True
         content = test_file.read_text()
         assert "// AGENT: Answer!" in content
+
+
+class TestFindGitRoot:
+    """Tests for finding git repository root."""
+
+    def test_finds_git_root_from_subdirectory(self):
+        """Finds git root from a subdirectory."""
+        # Use actual project directory
+        project_dir = Path(__file__).parent.parent
+        src_dir = project_dir / "src"
+
+        result = find_git_root(src_dir)
+
+        assert result is not None
+        assert result == project_dir.resolve()
+
+    def test_returns_none_for_non_git_directory(self, tmp_path):
+        """Returns None for directory not in a git repo."""
+        result = find_git_root(tmp_path)
+
+        assert result is None
+
+
+class TestOtherThreadsNotification:
+    """Tests for other_threads notification in get_threads."""
+
+    def test_no_other_threads_field_without_git(self, tmp_path):
+        """No other_threads field when not in a git repo."""
+        test_file = tmp_path / "test.py"
+        test_file.write_text("// AUTHOR: Question?\ndef foo(): pass\n")
+
+        result = _get_threads(str(tmp_path))
+
+        assert "other_threads" not in result
+
+    def test_no_other_threads_when_scanning_root(self):
+        """No other_threads when scanning entire repo root."""
+        # Use actual project directory (the repo root)
+        project_dir = Path(__file__).parent.parent
+
+        result = _get_threads(str(project_dir))
+
+        # When scanning root, there shouldn't be "other" threads
+        assert "other_threads" not in result

@@ -26,6 +26,21 @@ SLASH_COMMENT_EXTENSIONS = frozenset({
 })
 
 
+def find_git_root(path: Path) -> Path | None:
+    """Find the git repository root from the given path."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=path if path.is_dir() else path.parent,
+        )
+        return Path(result.stdout.strip())
+    except subprocess.CalledProcessError:
+        return None
+
+
 def generate_salt(length: int = 4) -> str:
     """Generate a random salt string."""
     chars = string.ascii_lowercase + string.digits
@@ -409,6 +424,37 @@ def get_threads(path: str) -> dict:
     # Warnings should be empty after salting, but include if any remain
     if warnings:
         result["warnings"] = warnings
+
+    # Check for threads elsewhere in the repo (read-only, no modifications)
+    git_root = find_git_root(search_path)
+    if git_root and git_root.resolve() != search_path.resolve():
+        try:
+            repo_threads, _ = find_all_threads(git_root)
+            # Find threads not in the scanned path
+            scanned_thread_ids = {t["id"] for t in threads}
+            other_threads = [t for t in repo_threads if t["id"] not in scanned_thread_ids]
+
+            if other_threads:
+                # Group by directory for helpful context
+                other_dirs = {}
+                for t in other_threads:
+                    rel_path = Path(t["file"]).relative_to(git_root)
+                    dir_name = str(rel_path.parent) if rel_path.parent != Path(".") else "(root)"
+                    other_dirs[dir_name] = other_dirs.get(dir_name, 0) + 1
+
+                dir_summary = ", ".join(f"{d}: {c}" for d, c in sorted(other_dirs.items()))
+                other_awaiting_agent = sum(1 for t in other_threads if t["status"] == "awaiting_agent")
+
+                result["other_threads"] = {
+                    "count": len(other_threads),
+                    "awaiting_agent": other_awaiting_agent,
+                    "by_directory": other_dirs,
+                    "note": f"{len(other_threads)} other thread(s) exist elsewhere in repo ({dir_summary}). "
+                            f"{other_awaiting_agent} awaiting agent response. "
+                            "Run get_threads on repo root to see all.",
+                }
+        except Exception:
+            pass  # Silently skip if repo-wide scan fails
 
     return result
 
