@@ -71,8 +71,8 @@ def normalize_inline_comments(file_path: Path) -> bool:
             indent = match.group(1)
             code = match.group(2).rstrip()
             author_text = match.group(3)
-            # Insert AUTHOR comment on its own line, then the code
-            new_lines.append(f"{indent}// AUTHOR: {author_text}")
+            # Insert AUTHOR comment on its own line (no indent), then the code
+            new_lines.append(f"// AUTHOR: {author_text}")
             new_lines.append(f"{indent}{code}")
             modified = True
         else:

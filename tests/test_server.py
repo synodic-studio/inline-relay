@@ -590,15 +590,15 @@ class TestNormalizeInlineComments:
         assert modified is False
         assert test_file.read_text() == original
 
-    def test_preserves_indentation(self, tmp_path):
-        """Indentation is preserved when normalizing."""
+    def test_author_has_no_indentation(self, tmp_path):
+        """AUTHOR comment has no indentation, code keeps its indentation."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("    func foo() // AUTHOR: Rename this?\n")
 
         normalize_inline_comments(test_file)
 
         lines = test_file.read_text().splitlines()
-        assert lines[0] == "    // AUTHOR: Rename this?"
+        assert lines[0] == "// AUTHOR: Rename this?"
         assert lines[1] == "    func foo()"
 
     def test_no_modification_for_standalone(self, tmp_path):
