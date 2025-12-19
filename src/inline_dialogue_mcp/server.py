@@ -15,12 +15,108 @@ mcp = FastMCP("inline-dialogue")
 AUTHOR_PATTERN = re.compile(r"^(\s*)//\s*AUTHOR:\s*(.*)$")
 AGENT_PATTERN = re.compile(r"^(\s*)//\s*AGENT:\s*(.*)$")
 SALT_PATTERN = re.compile(r"\[salt:[a-z0-9]+\]$")
+# Matches inline AUTHOR comments: code // AUTHOR: text (where code has non-whitespace)
+INLINE_AUTHOR_PATTERN = re.compile(r"^(\s*)(\S.*)//\s*AUTHOR:\s*(.*)$")
+
+# File extensions where // is the comment syntax (safe to normalize inline comments)
+SLASH_COMMENT_EXTENSIONS = frozenset({
+    ".swift", ".js", ".jsx", ".ts", ".tsx", ".java", ".c", ".cpp", ".h", ".hpp",
+    ".cs", ".go", ".rs", ".kt", ".kts", ".scala", ".m", ".mm", ".dart", ".groovy",
+    ".gradle", ".json", ".jsonc",
+})
 
 
 def generate_salt(length: int = 4) -> str:
     """Generate a random salt string."""
     chars = string.ascii_lowercase + string.digits
     return "".join(random.choice(chars) for _ in range(length))
+
+
+def uses_slash_comments(file_path: Path) -> bool:
+    """Check if file uses // for comments based on extension."""
+    return file_path.suffix.lower() in SLASH_COMMENT_EXTENSIONS
+
+
+def normalize_inline_comments(file_path: Path) -> bool:
+    """Move inline AUTHOR comments to their own line above the code.
+
+    Transforms: `code // AUTHOR: text`
+    Into:
+        `// AUTHOR: text`
+        `code`
+
+    Only processes files where // is the comment syntax.
+
+    Args:
+        file_path: Path to the file to normalize.
+
+    Returns:
+        True if the file was modified, False otherwise.
+    """
+    if not uses_slash_comments(file_path):
+        return False
+
+    try:
+        content = file_path.read_text()
+    except (OSError, UnicodeDecodeError):
+        return False
+
+    lines = content.splitlines()
+    new_lines = []
+    modified = False
+
+    for line in lines:
+        match = INLINE_AUTHOR_PATTERN.match(line)
+        if match:
+            indent = match.group(1)
+            code = match.group(2).rstrip()
+            author_text = match.group(3)
+            # Insert AUTHOR comment on its own line, then the code
+            new_lines.append(f"{indent}// AUTHOR: {author_text}")
+            new_lines.append(f"{indent}{code}")
+            modified = True
+        else:
+            new_lines.append(line)
+
+    if modified:
+        try:
+            file_path.write_text("\n".join(new_lines) + "\n")
+        except OSError:
+            return False
+
+    return modified
+
+
+def normalize_all_inline_comments(search_path: Path) -> list[str]:
+    """Normalize inline AUTHOR comments in all files under search_path.
+
+    Only processes files where // is the comment syntax (skips .py, .rb, etc.).
+
+    Args:
+        search_path: File or directory to process.
+
+    Returns:
+        List of file paths that were modified.
+    """
+    modified_files = []
+
+    if search_path.is_file():
+        if normalize_inline_comments(search_path):
+            modified_files.append(str(search_path))
+        return modified_files
+
+    for root, _dirs, files in os.walk(search_path):
+        root_path = Path(root)
+        if ".git" in root_path.parts:
+            continue
+        for filename in files:
+            if filename.startswith("."):
+                continue
+            file_path = root_path / filename
+            if normalize_inline_comments(file_path):
+                modified_files.append(str(file_path))
+
+    return modified_files
 
 
 def compute_thread_id(file_path: str, first_author_text: str) -> str:
@@ -250,14 +346,19 @@ def find_thread_location(file_path: Path, first_author_text: str) -> int | None:
 
 
 @mcp.tool()
-def get_threads(path: str = ".") -> dict:
+def get_threads(path: str) -> dict:
     """Find all AUTHOR/AGENT threads in the codebase.
+
+    Automatically normalizes inline AUTHOR comments (e.g., `code // AUTHOR: text`)
+    by moving them to their own line above the code. Only processes files where
+    // is the comment syntax (Swift, JS, TS, C, etc. - not Python).
 
     Automatically adds [salt:xxxx] suffix to duplicate threads to ensure
     unique IDs. Modified files are reported in the response.
 
     Args:
-        path: Directory or file to search. Defaults to current directory.
+        path: Absolute path to directory or file to search (required).
+              Claude Code should pass its current working directory.
 
     Returns:
         Dictionary with threads list and summary counts.
@@ -265,6 +366,9 @@ def get_threads(path: str = ".") -> dict:
     search_path = Path(path).resolve()
     if not search_path.exists():
         return {"error": f"Path not found: {path}"}
+
+    # Normalize inline AUTHOR comments (move to own line)
+    normalized_files = normalize_all_inline_comments(search_path)
 
     try:
         threads, warnings = find_all_threads(search_path)
@@ -295,6 +399,9 @@ def get_threads(path: str = ".") -> dict:
         },
     }
 
+    if normalized_files:
+        result["normalized_files"] = normalized_files
+
     if salted_files:
         result["salted_files"] = salted_files
 
@@ -306,13 +413,13 @@ def get_threads(path: str = ".") -> dict:
 
 
 @mcp.tool()
-def respond_to_thread(thread_id: str, response: str, path: str = ".") -> dict:
+def respond_to_thread(thread_id: str, response: str, path: str) -> dict:
     """Add an AGENT response to a thread. Enforces formatting mechanically.
 
     Args:
         thread_id: ID from get_threads.
         response: The response text (without // AGENT: prefix).
-        path: Directory or file to search for the thread. Use same path as get_threads.
+        path: Absolute path (required). Use same path as get_threads.
 
     Returns:
         Success status and file modified.
@@ -446,12 +553,12 @@ def clear_and_commit(file: str, message: str = "") -> dict:
 
 
 @mcp.tool()
-def dismiss_thread(thread_id: str, path: str = ".") -> dict:
+def dismiss_thread(thread_id: str, path: str) -> dict:
     """Remove a single thread without committing.
 
     Args:
         thread_id: ID from get_threads.
-        path: Directory or file to search for the thread. Use same path as get_threads.
+        path: Absolute path (required). Use same path as get_threads.
 
     Returns:
         Success status, file modified, and lines removed.
