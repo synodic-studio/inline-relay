@@ -450,12 +450,40 @@ def respond_to_thread(thread_id: str, response: str, path: str) -> dict:
     indent = indent_match.group(1) if indent_match else ""
 
     thread_end = start_line - 1
+    last_match = None
     for i in range(start_line - 1, len(lines)):
         line = lines[i]
-        if AUTHOR_PATTERN.match(line) or AGENT_PATTERN.match(line):
+        author_match = AUTHOR_PATTERN.match(line)
+        agent_match = AGENT_PATTERN.match(line)
+        if author_match or agent_match:
             thread_end = i
+            last_match = ("author", author_match) if author_match else ("agent", agent_match)
         else:
             break
+
+    # Check for duplicate or additional response when thread awaiting user
+    warn_additional_response = False
+    if last_match and last_match[0] == "author":
+        author_text = last_match[1].group(2).strip()
+        if not author_text:
+            # Thread ends with empty AUTHOR - check if this is a duplicate
+            # Look for the previous AGENT response
+            prev_agent_text = None
+            for j in range(thread_end - 1, start_line - 2, -1):
+                prev_line = lines[j]
+                prev_agent_match = AGENT_PATTERN.match(prev_line)
+                if prev_agent_match:
+                    prev_agent_text = prev_agent_match.group(2).strip()
+                    break
+
+            if prev_agent_text == response:
+                return {
+                    "success": False,
+                    "error": "Duplicate response blocked (identical to previous AGENT response)",
+                }
+            else:
+                # Different response - allow but will warn
+                warn_additional_response = True
 
     new_lines = [
         f"{indent}// AGENT: {response}",
@@ -469,7 +497,10 @@ def respond_to_thread(thread_id: str, response: str, path: str) -> dict:
     except OSError as e:
         return {"success": False, "error": str(e)}
 
-    return {"success": True, "file": str(file_path)}
+    result = {"success": True, "file": str(file_path)}
+    if warn_additional_response:
+        result["warning"] = "Added additional response while thread was awaiting user"
+    return result
 
 
 @mcp.tool()

@@ -475,6 +475,55 @@ class TestRespondToThread:
         assert result["success"] is False
         assert "not found" in result["error"]
 
+    def test_blocks_identical_duplicate_response(self, tmp_path):
+        """Blocks identical duplicate response."""
+        test_file = tmp_path / "test.py"
+        test_file.write_text(
+            "// AUTHOR: Question?\n"
+            "// AGENT: First answer\n"
+            "// AUTHOR: \n"
+            "def foo(): pass\n"
+        )
+
+        threads, _ = find_all_threads(test_file)
+        thread_id = threads[0]["id"]
+
+        # Attempting identical response should fail
+        result = _respond_to_thread(thread_id, "First answer", str(test_file))
+
+        assert result["success"] is False
+        assert "Duplicate response blocked" in result["error"]
+
+        # File should be unchanged
+        content = test_file.read_text()
+        assert content.count("// AGENT:") == 1
+
+    def test_warns_on_different_additional_response(self, tmp_path):
+        """Allows different response but warns when thread awaiting user."""
+        test_file = tmp_path / "test.py"
+        test_file.write_text(
+            "// AUTHOR: Question?\n"
+            "// AGENT: First answer\n"
+            "// AUTHOR: \n"
+            "def foo(): pass\n"
+        )
+
+        threads, _ = find_all_threads(test_file)
+        thread_id = threads[0]["id"]
+
+        # Different response should succeed with warning
+        result = _respond_to_thread(thread_id, "Additional clarification", str(test_file))
+
+        assert result["success"] is True
+        assert "warning" in result
+        assert "additional response" in result["warning"].lower()
+
+        # File should have both responses
+        content = test_file.read_text()
+        assert content.count("// AGENT:") == 2
+        assert "First answer" in content
+        assert "Additional clarification" in content
+
     def test_response_preserves_multiline_thread(self, tmp_path):
         """Response appends to existing multi-line thread."""
         test_file = tmp_path / "test.py"
