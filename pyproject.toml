@@ -1,0 +1,15 @@
+[project]
+name = "inline-dialogue-mcp"
+version = "0.1.0"
+description = "MCP server for managing AUTHOR/AGENT code review threads"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastmcp>=2.14.1",
+]
+
+[project.scripts]
+inline-dialogue-mcp = "inline_dialogue_mcp.server:mcp.run"
+
+[tool.uv]
+package = true
