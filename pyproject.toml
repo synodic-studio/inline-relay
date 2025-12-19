@@ -8,8 +8,17 @@ dependencies = [
     "fastmcp>=2.14.1",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
 [project.scripts]
 inline-dialogue-mcp = "inline_dialogue_mcp.server:mcp.run"
 
 [tool.uv]
 package = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

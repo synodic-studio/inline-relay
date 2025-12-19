@@ -1,0 +1,21 @@
+#!/bin/bash
+# Pre-push hook: run tests before allowing push
+
+set -e
+
+echo "Running tests before push..."
+
+# Find the virtual environment
+if [ -f ".venv/bin/python" ]; then
+    PYTHON=".venv/bin/python"
+elif [ -f "venv/bin/python" ]; then
+    PYTHON="venv/bin/python"
+else
+    echo "Error: No virtual environment found. Create one with 'uv venv && uv pip install -e .[dev]'"
+    exit 1
+fi
+
+# Run pytest
+$PYTHON -m pytest tests/ -q
+
+echo "All tests passed. Proceeding with push."

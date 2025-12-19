@@ -2,7 +2,9 @@
 
 import hashlib
 import os
+import random
 import re
+import string
 import subprocess
 from pathlib import Path
 
@@ -12,6 +14,13 @@ mcp = FastMCP("inline-dialogue")
 
 AUTHOR_PATTERN = re.compile(r"^(\s*)//\s*AUTHOR:\s*(.*)$")
 AGENT_PATTERN = re.compile(r"^(\s*)//\s*AGENT:\s*(.*)$")
+SALT_PATTERN = re.compile(r"\[salt:[a-z0-9]+\]$")
+
+
+def generate_salt(length: int = 4) -> str:
+    """Generate a random salt string."""
+    chars = string.ascii_lowercase + string.digits
+    return "".join(random.choice(chars) for _ in range(length))
 
 
 def compute_thread_id(file_path: str, first_author_text: str) -> str:
@@ -104,12 +113,48 @@ def find_threads_in_file(file_path: Path) -> list[dict]:
     return threads
 
 
-def find_all_threads(search_path: Path) -> list[dict]:
-    """Find all threads in a directory or file."""
+def find_all_threads(search_path: Path) -> tuple[list[dict], list[dict]]:
+    """Find all threads in a directory or file.
+
+    Returns:
+        Tuple of (threads, warnings) where warnings contains duplicate ID info.
+    """
     threads = []
+    warnings = []
+    seen_ids: dict[str, dict] = {}
+
+    def collect_threads(file_threads: list[dict]) -> None:
+        for thread in file_threads:
+            thread_id = thread["id"]
+            if thread_id in seen_ids:
+                existing = seen_ids[thread_id]
+                warnings.append({
+                    "type": "duplicate_thread_id",
+                    "thread_id": thread_id,
+                    "first_occurrence": {
+                        "file": existing["file"],
+                        "line": existing["start_line"],
+                        "text": existing["thread"][0]["text"],
+                    },
+                    "duplicate": {
+                        "file": thread["file"],
+                        "line": thread["start_line"],
+                        "text": thread["thread"][0]["text"],
+                    },
+                    "message": (
+                        f"Duplicate thread ID '{thread_id}': same first AUTHOR text "
+                        f"appears in {existing['file']}:{existing['start_line']} and "
+                        f"{thread['file']}:{thread['start_line']}. "
+                        "Reply operations may target the wrong thread."
+                    ),
+                })
+            else:
+                seen_ids[thread_id] = thread
+            threads.append(thread)
 
     if search_path.is_file():
-        return find_threads_in_file(search_path)
+        collect_threads(find_threads_in_file(search_path))
+        return threads, warnings
 
     for root, _dirs, files in os.walk(search_path):
         root_path = Path(root)
@@ -119,14 +164,69 @@ def find_all_threads(search_path: Path) -> list[dict]:
             if filename.startswith("."):
                 continue
             file_path = root_path / filename
-            threads.extend(find_threads_in_file(file_path))
+            collect_threads(find_threads_in_file(file_path))
 
-    return threads
+    return threads, warnings
+
+
+def salt_duplicate_threads(warnings: list[dict]) -> list[dict]:
+    """Add salt to duplicate threads to make them unique.
+
+    Modifies files in place to add [salt:xxxx] suffix to duplicate AUTHOR lines.
+
+    Args:
+        warnings: List of duplicate_thread_id warnings from find_all_threads.
+
+    Returns:
+        List of files that were modified.
+    """
+    modified_files = []
+
+    for warning in warnings:
+        if warning["type"] != "duplicate_thread_id":
+            continue
+
+        dup = warning["duplicate"]
+        file_path = Path(dup["file"])
+        line_num = dup["line"]  # 1-indexed
+
+        try:
+            content = file_path.read_text()
+        except (OSError, UnicodeDecodeError):
+            continue
+
+        lines = content.splitlines()
+        if line_num < 1 or line_num > len(lines):
+            continue
+
+        line = lines[line_num - 1]
+        match = AUTHOR_PATTERN.match(line)
+        if not match:
+            continue
+
+        # Don't add salt if already salted
+        text = match.group(2).strip()
+        if SALT_PATTERN.search(text):
+            continue
+
+        # Add salt to the line
+        salt = generate_salt()
+        indent = match.group(1)
+        new_line = f"{indent}// AUTHOR: {text} [salt:{salt}]"
+        lines[line_num - 1] = new_line
+
+        try:
+            file_path.write_text("\n".join(lines) + "\n")
+            modified_files.append(str(file_path))
+        except OSError:
+            continue
+
+    return modified_files
 
 
 def find_thread_by_id(search_path: Path, thread_id: str) -> dict | None:
     """Find a specific thread by ID."""
-    all_threads = find_all_threads(search_path)
+    all_threads, _ = find_all_threads(search_path)
     for thread in all_threads:
         if thread["id"] == thread_id:
             return thread
@@ -153,6 +253,9 @@ def find_thread_location(file_path: Path, first_author_text: str) -> int | None:
 def get_threads(path: str = ".") -> dict:
     """Find all AUTHOR/AGENT threads in the codebase.
 
+    Automatically adds [salt:xxxx] suffix to duplicate threads to ensure
+    unique IDs. Modified files are reported in the response.
+
     Args:
         path: Directory or file to search. Defaults to current directory.
 
@@ -164,7 +267,7 @@ def get_threads(path: str = ".") -> dict:
         return {"error": f"Path not found: {path}"}
 
     try:
-        threads = find_all_threads(search_path)
+        threads, warnings = find_all_threads(search_path)
     except Exception as e:
         return {
             "parse_error": True,
@@ -172,10 +275,18 @@ def get_threads(path: str = ".") -> dict:
             "raw_content": str(e),
         }
 
+    # Auto-salt duplicates and re-scan if any were found
+    salted_files = []
+    if warnings:
+        salted_files = salt_duplicate_threads(warnings)
+        if salted_files:
+            # Re-scan to get updated threads with unique IDs
+            threads, warnings = find_all_threads(search_path)
+
     pending = sum(1 for t in threads if t["status"] == "pending")
     awaiting = sum(1 for t in threads if t["status"] == "awaiting_user")
 
-    return {
+    result = {
         "threads": threads,
         "summary": {
             "total": len(threads),
@@ -183,6 +294,15 @@ def get_threads(path: str = ".") -> dict:
             "awaiting_user": awaiting,
         },
     }
+
+    if salted_files:
+        result["salted_files"] = salted_files
+
+    # Warnings should be empty after salting, but include if any remain
+    if warnings:
+        result["warnings"] = warnings
+
+    return result
 
 
 @mcp.tool()
