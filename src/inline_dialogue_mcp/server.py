@@ -444,6 +444,11 @@ def respond_to_thread(thread_id: str, response: str, path: str) -> dict:
 
     lines = content.splitlines()
 
+    # Detect existing thread indentation from first line
+    first_line = lines[start_line - 1]
+    indent_match = AUTHOR_PATTERN.match(first_line)
+    indent = indent_match.group(1) if indent_match else ""
+
     thread_end = start_line - 1
     for i in range(start_line - 1, len(lines)):
         line = lines[i]
@@ -453,8 +458,8 @@ def respond_to_thread(thread_id: str, response: str, path: str) -> dict:
             break
 
     new_lines = [
-        f"// AGENT: {response}",
-        "// AUTHOR: ",
+        f"{indent}// AGENT: {response}",
+        f"{indent}// AUTHOR: ",
     ]
 
     lines = lines[: thread_end + 1] + new_lines + lines[thread_end + 1:]

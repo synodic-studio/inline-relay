@@ -448,6 +448,23 @@ class TestRespondToThread:
         assert lines[2] == "// AUTHOR: "
         assert lines[3] == "def foo(): pass"
 
+    def test_response_preserves_indentation(self, tmp_path):
+        """Response preserves thread's existing indentation."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("func foo() {\n    // AUTHOR: Question?\n}\n")
+
+        threads, _ = find_all_threads(test_file)
+        thread_id = threads[0]["id"]
+
+        result = _respond_to_thread(thread_id, "Answer!", str(test_file))
+
+        assert result["success"] is True
+        content = test_file.read_text()
+        lines = content.splitlines()
+        assert lines[1] == "    // AUTHOR: Question?"
+        assert lines[2] == "    // AGENT: Answer!"
+        assert lines[3] == "    // AUTHOR: "
+
     def test_response_to_nonexistent_thread(self, tmp_path):
         """Returns error for missing thread ID."""
         test_file = tmp_path / "test.py"
