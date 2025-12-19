@@ -67,7 +67,7 @@ class TestFindThreadsInFile:
 
         assert len(threads) == 1
         assert threads[0]["thread"][0]["text"] == "Fix this bug"
-        assert threads[0]["status"] == "pending"
+        assert threads[0]["status"] == "awaiting_agent"
 
     def test_author_agent_thread(self, tmp_path):
         """Detects AUTHOR/AGENT conversation."""
@@ -99,7 +99,7 @@ class TestFindThreadsInFile:
         threads = find_threads_in_file(test_file)
 
         assert len(threads) == 1
-        assert threads[0]["status"] == "awaiting_user"
+        assert threads[0]["status"] == "awaiting_author"
 
     def test_multiple_threads(self, tmp_path):
         """Detects multiple separate threads."""

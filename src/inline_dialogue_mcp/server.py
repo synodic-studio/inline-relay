@@ -169,12 +169,11 @@ def find_threads_in_file(file_path: Path) -> list[dict]:
                 current_thread["first_author_text"],
             )
             last_entry = current_thread["thread"][-1]
-            if last_entry["role"] == "author" and last_entry["text"] == "":
-                status = "awaiting_user"
-            elif last_entry["role"] == "author":
-                status = "pending"
+            # Empty AUTHOR line is a placeholder for author's next response
+            if last_entry["role"] == "author" and last_entry["text"]:
+                status = "awaiting_agent"
             else:
-                status = "pending"
+                status = "awaiting_author"
 
             threads.append({
                 "id": thread_id,
@@ -191,12 +190,10 @@ def find_threads_in_file(file_path: Path) -> list[dict]:
             current_thread["first_author_text"],
         )
         last_entry = current_thread["thread"][-1]
-        if last_entry["role"] == "author" and last_entry["text"] == "":
-            status = "awaiting_user"
-        elif last_entry["role"] == "author":
-            status = "pending"
+        if last_entry["role"] == "author":
+            status = "awaiting_agent"
         else:
-            status = "pending"
+            status = "awaiting_author"
 
         threads.append({
             "id": thread_id,
@@ -356,6 +353,10 @@ def get_threads(path: str) -> dict:
     Automatically adds [salt:xxxx] suffix to duplicate threads to ensure
     unique IDs. Modified files are reported in the response.
 
+    IMPORTANT: When making code changes based on threads, use the Edit tool
+    (not Write) to preserve thread markers. Writing entire files destroys
+    the AUTHOR/AGENT comments.
+
     Args:
         path: Absolute path to directory or file to search (required).
               Claude Code should pass its current working directory.
@@ -387,15 +388,15 @@ def get_threads(path: str) -> dict:
             # Re-scan to get updated threads with unique IDs
             threads, warnings = find_all_threads(search_path)
 
-    pending = sum(1 for t in threads if t["status"] == "pending")
-    awaiting = sum(1 for t in threads if t["status"] == "awaiting_user")
+    awaiting_agent = sum(1 for t in threads if t["status"] == "awaiting_agent")
+    awaiting_author = sum(1 for t in threads if t["status"] == "awaiting_author")
 
     result = {
         "threads": threads,
         "summary": {
             "total": len(threads),
-            "pending": pending,
-            "awaiting_user": awaiting,
+            "awaiting_agent": awaiting_agent,
+            "awaiting_author": awaiting_author,
         },
     }
 
@@ -467,8 +468,11 @@ def respond_to_thread(thread_id: str, response: str, path: str) -> dict:
 
 
 @mcp.tool()
-def clear_and_commit(file: str, message: str = "") -> dict:
+def commit_approved(file: str, message: str = "") -> dict:
     """Clear ALL thread markers from a file and commit that file only.
+
+    WARNING: Only call this when the user explicitly says "commit" or
+    "commit this file". This removes all AUTHOR/AGENT markers permanently.
 
     Args:
         file: Path to the file.
@@ -553,8 +557,12 @@ def clear_and_commit(file: str, message: str = "") -> dict:
 
 
 @mcp.tool()
-def dismiss_thread(thread_id: str, path: str) -> dict:
+def delete_thread_approved(thread_id: str, path: str) -> dict:
     """Remove a single thread without committing.
+
+    WARNING: Only call this when the user explicitly approves deletion
+    (e.g., says "done", "close", "resolved"). This permanently removes
+    the thread markers from the file.
 
     Args:
         thread_id: ID from get_threads.
