@@ -5,7 +5,9 @@ from pathlib import Path
 import pytest
 
 from inline_dialogue_mcp.server import (
+    INLINE_AUTHOR_PATTERN,
     SALT_PATTERN,
+    SLASH_COMMENT_EXTENSIONS,
     compute_thread_id,
     find_all_threads,
     find_thread_by_id,
@@ -13,8 +15,11 @@ from inline_dialogue_mcp.server import (
     find_threads_in_file,
     generate_salt,
     get_threads,
+    normalize_all_inline_comments,
+    normalize_inline_comments,
     respond_to_thread,
     salt_duplicate_threads,
+    uses_slash_comments,
 )
 
 # Access underlying functions from FunctionTool wrappers
@@ -62,7 +67,7 @@ class TestFindThreadsInFile:
 
         assert len(threads) == 1
         assert threads[0]["thread"][0]["text"] == "Fix this bug"
-        assert threads[0]["status"] == "pending"
+        assert threads[0]["status"] == "awaiting_agent"
 
     def test_author_agent_thread(self, tmp_path):
         """Detects AUTHOR/AGENT conversation."""
@@ -94,7 +99,7 @@ class TestFindThreadsInFile:
         threads = find_threads_in_file(test_file)
 
         assert len(threads) == 1
-        assert threads[0]["status"] == "awaiting_user"
+        assert threads[0]["status"] == "awaiting_author"
 
     def test_multiple_threads(self, tmp_path):
         """Detects multiple separate threads."""
@@ -498,3 +503,254 @@ class TestFindThreadById:
         found = find_thread_by_id(test_file, "nonexistent")
 
         assert found is None
+
+
+class TestInlineAuthorPattern:
+    """Tests for inline AUTHOR comment pattern matching."""
+
+    def test_matches_inline_comment(self):
+        """Pattern matches code followed by AUTHOR comment."""
+        match = INLINE_AUTHOR_PATTERN.match("let x = 5 // AUTHOR: Is this correct?")
+        assert match is not None
+        assert match.group(1) == ""  # no indent
+        assert match.group(2) == "let x = 5 "
+        assert match.group(3) == "Is this correct?"
+
+    def test_matches_with_indent(self):
+        """Pattern captures leading indentation."""
+        match = INLINE_AUTHOR_PATTERN.match("    code() // AUTHOR: question")
+        assert match is not None
+        assert match.group(1) == "    "
+        assert match.group(2) == "code() "
+        assert match.group(3) == "question"
+
+    def test_no_match_standalone_author(self):
+        """Pattern does NOT match standalone AUTHOR comment."""
+        match = INLINE_AUTHOR_PATTERN.match("// AUTHOR: standalone comment")
+        assert match is None
+
+    def test_no_match_indented_standalone(self):
+        """Pattern does NOT match indented standalone AUTHOR comment."""
+        match = INLINE_AUTHOR_PATTERN.match("    // AUTHOR: indented standalone")
+        assert match is None
+
+
+class TestUsesSlashComments:
+    """Tests for file extension detection."""
+
+    def test_swift_uses_slash_comments(self, tmp_path):
+        """Swift files use // comments."""
+        swift_file = tmp_path / "test.swift"
+        assert uses_slash_comments(swift_file) is True
+
+    def test_python_does_not_use_slash_comments(self, tmp_path):
+        """Python files do NOT use // comments."""
+        py_file = tmp_path / "test.py"
+        assert uses_slash_comments(py_file) is False
+
+    def test_javascript_uses_slash_comments(self, tmp_path):
+        """JavaScript files use // comments."""
+        js_file = tmp_path / "test.js"
+        assert uses_slash_comments(js_file) is True
+
+    def test_typescript_uses_slash_comments(self, tmp_path):
+        """TypeScript files use // comments."""
+        ts_file = tmp_path / "test.tsx"
+        assert uses_slash_comments(ts_file) is True
+
+    def test_case_insensitive(self, tmp_path):
+        """Extension check is case insensitive."""
+        swift_file = tmp_path / "test.SWIFT"
+        assert uses_slash_comments(swift_file) is True
+
+
+class TestNormalizeInlineComments:
+    """Tests for normalizing inline AUTHOR comments to own lines."""
+
+    def test_moves_inline_to_own_line_swift(self, tmp_path):
+        """Inline AUTHOR comment is moved above the code in Swift."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("let x = 5 // AUTHOR: Is this right?\n")
+
+        modified = normalize_inline_comments(test_file)
+
+        assert modified is True
+        lines = test_file.read_text().splitlines()
+        assert lines[0] == "// AUTHOR: Is this right?"
+        assert lines[1] == "let x = 5"
+
+    def test_skips_python_files(self, tmp_path):
+        """Python files are NOT normalized (// isn't a comment)."""
+        test_file = tmp_path / "test.py"
+        original = 'print("// AUTHOR: not a comment")\n'
+        test_file.write_text(original)
+
+        modified = normalize_inline_comments(test_file)
+
+        assert modified is False
+        assert test_file.read_text() == original
+
+    def test_author_has_no_indentation(self, tmp_path):
+        """AUTHOR comment has no indentation, code keeps its indentation."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("    func foo() // AUTHOR: Rename this?\n")
+
+        normalize_inline_comments(test_file)
+
+        lines = test_file.read_text().splitlines()
+        assert lines[0] == "// AUTHOR: Rename this?"
+        assert lines[1] == "    func foo()"
+
+    def test_no_modification_for_standalone(self, tmp_path):
+        """Standalone AUTHOR comments are not modified."""
+        test_file = tmp_path / "test.swift"
+        original = "// AUTHOR: Already on own line\nlet x = 5\n"
+        test_file.write_text(original)
+
+        modified = normalize_inline_comments(test_file)
+
+        assert modified is False
+        assert test_file.read_text() == original
+
+    def test_multiple_inline_comments(self, tmp_path):
+        """Multiple inline comments are all normalized."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text(
+            "let a = 1 // AUTHOR: First\n"
+            "let b = 2\n"
+            "let c = 3 // AUTHOR: Second\n"
+        )
+
+        modified = normalize_inline_comments(test_file)
+
+        assert modified is True
+        lines = test_file.read_text().splitlines()
+        assert lines[0] == "// AUTHOR: First"
+        assert lines[1] == "let a = 1"
+        assert lines[2] == "let b = 2"
+        assert lines[3] == "// AUTHOR: Second"
+        assert lines[4] == "let c = 3"
+
+
+class TestNormalizeAllInlineComments:
+    """Tests for normalizing inline comments across directories."""
+
+    def test_normalizes_swift_file(self, tmp_path):
+        """Swift file with inline comment is normalized."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("code() // AUTHOR: question\n")
+
+        modified = normalize_all_inline_comments(test_file)
+
+        assert modified == [str(test_file)]
+
+    def test_skips_python_file(self, tmp_path):
+        """Python files are skipped."""
+        test_file = tmp_path / "test.py"
+        test_file.write_text("code() // AUTHOR: question\n")
+
+        modified = normalize_all_inline_comments(test_file)
+
+        assert modified == []
+
+    def test_normalizes_directory(self, tmp_path):
+        """All Swift files in directory are normalized."""
+        file1 = tmp_path / "file1.swift"
+        file2 = tmp_path / "file2.swift"
+        file1.write_text("a() // AUTHOR: q1\n")
+        file2.write_text("b() // AUTHOR: q2\n")
+
+        modified = normalize_all_inline_comments(tmp_path)
+
+        assert len(modified) == 2
+        assert str(file1) in modified
+        assert str(file2) in modified
+
+    def test_skips_git_directory(self, tmp_path):
+        """Files in .git directory are not processed."""
+        git_dir = tmp_path / ".git"
+        git_dir.mkdir()
+        git_file = git_dir / "config.swift"
+        git_file.write_text("code() // AUTHOR: should ignore\n")
+
+        modified = normalize_all_inline_comments(tmp_path)
+
+        assert modified == []
+
+    def test_mixed_extensions(self, tmp_path):
+        """Only files with // comments are normalized."""
+        swift_file = tmp_path / "test.swift"
+        py_file = tmp_path / "test.py"
+        swift_file.write_text("a() // AUTHOR: normalize this\n")
+        py_file.write_text("a() // AUTHOR: skip this\n")
+
+        modified = normalize_all_inline_comments(tmp_path)
+
+        assert modified == [str(swift_file)]
+
+
+class TestGetThreadsWithInlineComments:
+    """Tests for get_threads with inline comment normalization."""
+
+    def test_get_threads_normalizes_inline_swift(self, tmp_path):
+        """get_threads normalizes inline comments in Swift files."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("let x = 5 // AUTHOR: Is this ok?\n")
+
+        result = _get_threads(str(test_file))
+
+        assert "normalized_files" in result
+        assert len(result["normalized_files"]) == 1
+        assert len(result["threads"]) == 1
+        assert result["threads"][0]["thread"][0]["text"] == "Is this ok?"
+
+    def test_get_threads_skips_python(self, tmp_path):
+        """get_threads does not normalize Python files."""
+        test_file = tmp_path / "test.py"
+        # This has // AUTHOR: in a string - should NOT be normalized
+        test_file.write_text('print("// AUTHOR: not real")\n')
+
+        result = _get_threads(str(test_file))
+
+        assert "normalized_files" not in result
+        assert len(result["threads"]) == 0
+
+    def test_get_threads_no_normalization_needed(self, tmp_path):
+        """get_threads doesn't report normalized_files when none needed."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("// AUTHOR: Already standalone\nlet x = 5\n")
+
+        result = _get_threads(str(test_file))
+
+        assert "normalized_files" not in result
+        assert len(result["threads"]) == 1
+
+    def test_normalized_thread_is_found(self, tmp_path):
+        """After normalization, thread is properly detected."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text(
+            "let startHue = max(0, centerHue - hueRange) "
+            "// AUTHOR: can't these be computed props?\n"
+        )
+
+        result = _get_threads(str(test_file))
+
+        assert result["summary"]["total"] == 1
+        thread = result["threads"][0]
+        assert thread["thread"][0]["text"] == "can't these be computed props?"
+
+    def test_reply_to_normalized_thread(self, tmp_path):
+        """Can reply to a thread that was normalized from inline."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("code() // AUTHOR: question\n")
+
+        # Get threads (will normalize)
+        result = _get_threads(str(test_file))
+        thread_id = result["threads"][0]["id"]
+
+        # Reply
+        reply_result = _respond_to_thread(thread_id, "Answer!", str(test_file))
+
+        assert reply_result["success"] is True
+        content = test_file.read_text()
+        assert "// AGENT: Answer!" in content
