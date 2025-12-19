@@ -140,6 +140,40 @@ def compute_thread_id(file_path: str, first_author_text: str) -> str:
     return hashlib.sha256(content.encode()).hexdigest()[:8]
 
 
+# Exact command patterns that require immediate action (no response)
+ACTION_COMMANDS = {
+    "done": ("delete_thread_approved", "Thread complete. Call delete_thread_approved(thread_id, path) immediately."),
+    "commit": ("commit_approved", "Commit requested. Call commit_approved(file) immediately."),
+    "commit file": ("commit_approved", "Commit requested. Call commit_approved(file) immediately."),
+    "reset": ("dismiss_thread", "Reset requested. Call dismiss_thread(thread_id, path) immediately."),
+}
+
+
+def detect_action_command(last_author_text: str) -> dict | None:
+    """Detect if AUTHOR text is a command requiring immediate action.
+
+    Only exact matches trigger actions. Partial matches like "done with refactoring"
+    are treated as normal conversation.
+
+    Args:
+        last_author_text: The text of the last AUTHOR line.
+
+    Returns:
+        Action info dict if command detected, None otherwise.
+    """
+    text = last_author_text.strip().lower()
+
+    if text in ACTION_COMMANDS:
+        action, note = ACTION_COMMANDS[text]
+        return {
+            "action": action,
+            "text": last_author_text.strip(),
+            "note": f"COMMAND detected: '{text}'. Do NOT respond. {note}",
+        }
+
+    return None
+
+
 def find_threads_in_file(file_path: Path) -> list[dict]:
     """Find all AUTHOR/AGENT threads in a file."""
     try:
@@ -190,13 +224,21 @@ def find_threads_in_file(file_path: Path) -> list[dict]:
             else:
                 status = "awaiting_author"
 
-            threads.append({
+            thread_data = {
                 "id": thread_id,
                 "file": current_thread["file"],
                 "start_line": current_thread["start_line"],
                 "thread": current_thread["thread"],
                 "status": status,
-            })
+            }
+
+            # Check for action commands in the last author message
+            if status == "awaiting_agent" and last_entry["text"]:
+                action = detect_action_command(last_entry["text"])
+                if action:
+                    thread_data["action_required"] = action
+
+            threads.append(thread_data)
             current_thread = None
 
     if current_thread is not None:
@@ -210,13 +252,21 @@ def find_threads_in_file(file_path: Path) -> list[dict]:
         else:
             status = "awaiting_author"
 
-        threads.append({
+        thread_data = {
             "id": thread_id,
             "file": current_thread["file"],
             "start_line": current_thread["start_line"],
             "thread": current_thread["thread"],
             "status": status,
-        })
+        }
+
+        # Check for action commands in the last author message
+        if status == "awaiting_agent" and last_entry["text"]:
+            action = detect_action_command(last_entry["text"])
+            if action:
+                thread_data["action_required"] = action
+
+        threads.append(thread_data)
 
     return threads
 

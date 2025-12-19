@@ -9,6 +9,7 @@ from inline_dialogue_mcp.server import (
     SALT_PATTERN,
     SLASH_COMMENT_EXTENSIONS,
     compute_thread_id,
+    detect_action_command,
     find_all_threads,
     find_git_root,
     find_thread_by_id,
@@ -865,3 +866,106 @@ class TestOtherThreadsNotification:
 
         # When scanning root, there shouldn't be "other" threads
         assert "other_threads" not in result
+
+
+class TestActionCommandDetection:
+    """Tests for action_required field when AUTHOR uses command patterns."""
+
+    def test_done_command_detected(self, tmp_path):
+        """'done' triggers action_required with delete_thread_approved."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("// AUTHOR: done\nfunc foo() {}\n")
+
+        result = _get_threads(str(test_file))
+
+        assert len(result["threads"]) == 1
+        thread = result["threads"][0]
+        assert "action_required" in thread
+        assert thread["action_required"]["action"] == "delete_thread_approved"
+        assert "COMMAND detected" in thread["action_required"]["note"]
+
+    def test_commit_command_detected(self, tmp_path):
+        """'commit' triggers action_required with commit_approved."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("// AUTHOR: commit\nfunc foo() {}\n")
+
+        result = _get_threads(str(test_file))
+
+        thread = result["threads"][0]
+        assert "action_required" in thread
+        assert thread["action_required"]["action"] == "commit_approved"
+
+    def test_commit_file_command_detected(self, tmp_path):
+        """'commit file' triggers action_required with commit_approved."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("// AUTHOR: commit file\nfunc foo() {}\n")
+
+        result = _get_threads(str(test_file))
+
+        thread = result["threads"][0]
+        assert "action_required" in thread
+        assert thread["action_required"]["action"] == "commit_approved"
+
+    def test_reset_command_detected(self, tmp_path):
+        """'reset' triggers action_required with dismiss_thread."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("// AUTHOR: reset\nfunc foo() {}\n")
+
+        result = _get_threads(str(test_file))
+
+        thread = result["threads"][0]
+        assert "action_required" in thread
+        assert thread["action_required"]["action"] == "dismiss_thread"
+
+    def test_partial_match_not_detected(self, tmp_path):
+        """Partial matches like 'done with refactoring' are NOT commands."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("// AUTHOR: done with the refactoring\nfunc foo() {}\n")
+
+        result = _get_threads(str(test_file))
+
+        thread = result["threads"][0]
+        assert "action_required" not in thread
+        assert thread["status"] == "awaiting_agent"
+
+    def test_commit_in_sentence_not_detected(self, tmp_path):
+        """'commit to this approach' is NOT a command."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("// AUTHOR: I want to commit to this approach\nfunc foo() {}\n")
+
+        result = _get_threads(str(test_file))
+
+        thread = result["threads"][0]
+        assert "action_required" not in thread
+
+    def test_case_insensitive_command(self, tmp_path):
+        """Commands are case-insensitive."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("// AUTHOR: DONE\nfunc foo() {}\n")
+
+        result = _get_threads(str(test_file))
+
+        thread = result["threads"][0]
+        assert "action_required" in thread
+        assert thread["action_required"]["action"] == "delete_thread_approved"
+
+    def test_command_with_whitespace(self, tmp_path):
+        """Commands with leading/trailing whitespace still work."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("// AUTHOR:   done   \nfunc foo() {}\n")
+
+        result = _get_threads(str(test_file))
+
+        thread = result["threads"][0]
+        assert "action_required" in thread
+
+    def test_no_action_when_awaiting_author(self, tmp_path):
+        """No action_required when thread is awaiting author (empty AUTHOR line)."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("// AUTHOR: question?\n// AGENT: answer\n// AUTHOR: \nfunc foo() {}\n")
+
+        result = _get_threads(str(test_file))
+
+        thread = result["threads"][0]
+        assert "action_required" not in thread
+        assert thread["status"] == "awaiting_author"
