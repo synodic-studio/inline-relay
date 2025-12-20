@@ -30,6 +30,26 @@ ACTION_COMMANDS = {
 }
 
 
+def is_plugin_directory(path: Path) -> bool:
+    """Check if path is within a Claude Code plugin directory.
+
+    Detects plugin directories by looking for .claude-plugin/plugin.json
+    in the path itself or any parent directory.
+
+    Args:
+        path: Path to check.
+
+    Returns:
+        True if path is within a plugin directory.
+    """
+    check_path = path.resolve()
+    # Check path and all parents up to filesystem root
+    for parent in [check_path, *check_path.parents]:
+        if (parent / ".claude-plugin" / "plugin.json").exists():
+            return True
+    return False
+
+
 def find_git_root(path: Path) -> Path | None:
     """Find the git repository root from the given path."""
     try:
@@ -271,7 +291,17 @@ def find_all_threads(search_path: Path) -> tuple[list[dict], list[dict]]:
 
     Returns:
         Tuple of (threads, warnings) where warnings contains duplicate ID info.
+
+    Raises:
+        ValueError: If search_path is within a plugin directory.
     """
+    # Early exit if scanning within a plugin directory
+    if is_plugin_directory(search_path):
+        raise ValueError(
+            f"Refusing to scan plugin directory: {search_path}. "
+            "Thread scanning should target project files, not plugin internals."
+        )
+
     threads = []
     warnings = []
     seen_ids: dict[str, dict] = {}

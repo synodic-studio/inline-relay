@@ -62,6 +62,9 @@ async def get_threads(path: str, ctx: Context) -> dict:
 
     try:
         threads, warnings = find_all_threads(search_path)
+    except ValueError as e:
+        # Plugin directory protection - return clear error
+        return {"error": str(e)}
     except Exception as e:
         return {
             "parse_error": True,
