@@ -4,5 +4,6 @@
   "description": "AUTHOR/AGENT inline code review threads - MCP tools and edit guards",
   "author": {
     "name": "Synodic Studio"
-  }
+  },
+  "mcpServers": "./.mcp.json"
 }
