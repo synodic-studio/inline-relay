@@ -872,7 +872,7 @@ class TestActionCommandDetection:
     """Tests for action_required field when AUTHOR uses command patterns."""
 
     def test_done_command_detected(self, tmp_path):
-        """'done' triggers action_required with delete_thread_approved."""
+        """'done' triggers action_required with dismiss_thread."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: done\nfunc foo() {}\n")
 
@@ -881,11 +881,11 @@ class TestActionCommandDetection:
         assert len(result["threads"]) == 1
         thread = result["threads"][0]
         assert "action_required" in thread
-        assert thread["action_required"]["action"] == "delete_thread_approved"
+        assert thread["action_required"]["action"] == "dismiss_thread"
         assert "COMMAND detected" in thread["action_required"]["note"]
 
     def test_commit_command_detected(self, tmp_path):
-        """'commit' triggers action_required with commit_approved."""
+        """'commit' triggers action_required with clear_and_commit."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: commit\nfunc foo() {}\n")
 
@@ -893,10 +893,10 @@ class TestActionCommandDetection:
 
         thread = result["threads"][0]
         assert "action_required" in thread
-        assert thread["action_required"]["action"] == "commit_approved"
+        assert thread["action_required"]["action"] == "clear_and_commit"
 
     def test_commit_file_command_detected(self, tmp_path):
-        """'commit file' triggers action_required with commit_approved."""
+        """'commit file' triggers action_required with clear_and_commit."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: commit file\nfunc foo() {}\n")
 
@@ -904,7 +904,7 @@ class TestActionCommandDetection:
 
         thread = result["threads"][0]
         assert "action_required" in thread
-        assert thread["action_required"]["action"] == "commit_approved"
+        assert thread["action_required"]["action"] == "clear_and_commit"
 
     def test_reset_command_detected(self, tmp_path):
         """'reset' triggers action_required with dismiss_thread."""
@@ -947,7 +947,7 @@ class TestActionCommandDetection:
 
         thread = result["threads"][0]
         assert "action_required" in thread
-        assert thread["action_required"]["action"] == "delete_thread_approved"
+        assert thread["action_required"]["action"] == "dismiss_thread"
 
     def test_command_with_whitespace(self, tmp_path):
         """Commands with leading/trailing whitespace still work."""

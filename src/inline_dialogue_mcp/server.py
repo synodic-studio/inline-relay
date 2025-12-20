@@ -142,9 +142,9 @@ def compute_thread_id(file_path: str, first_author_text: str) -> str:
 
 # Exact command patterns that require immediate action (no response)
 ACTION_COMMANDS = {
-    "done": ("delete_thread_approved", "Thread complete. Call delete_thread_approved(thread_id, path) immediately."),
-    "commit": ("commit_approved", "Commit requested. Call commit_approved(file) immediately."),
-    "commit file": ("commit_approved", "Commit requested. Call commit_approved(file) immediately."),
+    "done": ("dismiss_thread", "Thread complete. Call dismiss_thread(thread_id, path) immediately."),
+    "commit": ("clear_and_commit", "Commit requested. Call clear_and_commit(file) immediately."),
+    "commit file": ("clear_and_commit", "Commit requested. Call clear_and_commit(file) immediately."),
     "reset": ("dismiss_thread", "Reset requested. Call dismiss_thread(thread_id, path) immediately."),
 }
 
@@ -411,20 +411,15 @@ def find_thread_location(file_path: Path, first_author_text: str) -> int | None:
 def get_threads(path: str) -> dict:
     """Find all AUTHOR/AGENT threads in the codebase.
 
-    Automatically normalizes inline AUTHOR comments (e.g., `code // AUTHOR: text`)
-    by moving them to their own line above the code. Only processes files where
-    // is the comment syntax (Swift, JS, TS, C, etc. - not Python).
+    CRITICAL: Threads are READ-ONLY in the file. Never edit thread markers
+    directly. Use respond_to_thread to add responses. Use Edit tool only
+    for code changes, preserving all thread markers exactly.
 
-    Automatically adds [salt:xxxx] suffix to duplicate threads to ensure
-    unique IDs. Modified files are reported in the response.
-
-    IMPORTANT: When making code changes based on threads, use the Edit tool
-    (not Write) to preserve thread markers. Writing entire files destroys
-    the AUTHOR/AGENT comments.
+    If a thread has `action_required`, execute that action immediately
+    without calling respond_to_thread.
 
     Args:
         path: Absolute path to directory or file to search (required).
-              Claude Code should pass its current working directory.
 
     Returns:
         Dictionary with threads list and summary counts.
@@ -513,10 +508,14 @@ def get_threads(path: str) -> dict:
 def respond_to_thread(thread_id: str, response: str, path: str) -> dict:
     """Add an AGENT response to a thread. Enforces formatting mechanically.
 
+    This is the ONLY way to add AGENT responses. NEVER use Edit tool to add
+    // AGENT: lines - it will corrupt thread formatting. This tool appends
+    correctly and adds the trailing // AUTHOR: placeholder.
+
     Args:
         thread_id: ID from get_threads.
         response: The response text (without // AGENT: prefix).
-        path: Absolute path (required). Use same path as get_threads.
+        path: Directory or file to search for the thread. Use same path as get_threads.
 
     Returns:
         Success status and file modified.
@@ -600,11 +599,11 @@ def respond_to_thread(thread_id: str, response: str, path: str) -> dict:
 
 
 @mcp.tool()
-def commit_approved(file: str, message: str = "") -> dict:
+def clear_and_commit(file: str, message: str = "") -> dict:
     """Clear ALL thread markers from a file and commit that file only.
 
-    WARNING: Only call this when the user explicitly says "commit" or
-    "commit this file". This removes all AUTHOR/AGENT markers permanently.
+    Only call when action_required says "commit" or "commit file".
+    Removes all // AUTHOR: and // AGENT: lines permanently, then commits.
 
     Args:
         file: Path to the file.
@@ -689,16 +688,15 @@ def commit_approved(file: str, message: str = "") -> dict:
 
 
 @mcp.tool()
-def delete_thread_approved(thread_id: str, path: str) -> dict:
+def dismiss_thread(thread_id: str, path: str) -> dict:
     """Remove a single thread without committing.
 
-    WARNING: Only call this when the user explicitly approves deletion
-    (e.g., says "done", "close", "resolved"). This permanently removes
-    the thread markers from the file.
+    Only call when action_required says "done" or "reset".
+    Permanently removes the thread markers from the file.
 
     Args:
         thread_id: ID from get_threads.
-        path: Absolute path (required). Use same path as get_threads.
+        path: Directory or file to search for the thread. Use same path as get_threads.
 
     Returns:
         Success status, file modified, and lines removed.
