@@ -982,3 +982,49 @@ class TestActionCommandDetection:
         thread = result["threads"][0]
         assert "action_required" not in thread
         assert thread["status"] == "awaiting_author"
+
+
+class TestPluginDirectoryProtection:
+    """Tests for plugin directory scanning protection."""
+
+    def test_is_plugin_directory_detects_plugin(self, tmp_path):
+        """Detects plugin directory by .claude-plugin/plugin.json."""
+        from inline_dialogue_mcp.core import is_plugin_directory
+
+        # Create plugin structure
+        plugin_dir = tmp_path / ".claude-plugin"
+        plugin_dir.mkdir()
+        (plugin_dir / "plugin.json").write_text('{"name": "test"}')
+
+        assert is_plugin_directory(tmp_path) is True
+        assert is_plugin_directory(tmp_path / "src") is True  # Subdirectory
+
+    def test_is_plugin_directory_non_plugin(self, tmp_path):
+        """Regular directories are not detected as plugins."""
+        from inline_dialogue_mcp.core import is_plugin_directory
+
+        assert is_plugin_directory(tmp_path) is False
+
+    def test_find_all_threads_rejects_plugin_directory(self, tmp_path):
+        """find_all_threads raises ValueError for plugin directories."""
+        from inline_dialogue_mcp.core import find_all_threads
+
+        # Create plugin structure
+        plugin_dir = tmp_path / ".claude-plugin"
+        plugin_dir.mkdir()
+        (plugin_dir / "plugin.json").write_text('{"name": "test"}')
+
+        with pytest.raises(ValueError, match="Refusing to scan plugin directory"):
+            find_all_threads(tmp_path)
+
+    async def test_get_threads_returns_error_for_plugin_directory(self, tmp_path, mock_ctx):
+        """get_threads returns error dict for plugin directories."""
+        # Create plugin structure
+        plugin_dir = tmp_path / ".claude-plugin"
+        plugin_dir.mkdir()
+        (plugin_dir / "plugin.json").write_text('{"name": "test"}')
+
+        result = await _get_threads(str(tmp_path), mock_ctx)
+
+        assert "error" in result
+        assert "plugin directory" in result["error"]
