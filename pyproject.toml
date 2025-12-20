@@ -17,6 +17,9 @@ dev = [
 [project.scripts]
 inline-dialogue-mcp = "inline_dialogue_mcp.server:mcp.run"
 
+[tool.setuptools]
+package-dir = {"" = "src"}
+
 [tool.uv]
 package = true
 
