@@ -1,6 +1,7 @@
 """Tests for inline-dialogue MCP server thread handling."""
 
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -10,6 +11,7 @@ from inline_dialogue_mcp.server import (
     SLASH_COMMENT_EXTENSIONS,
     compute_thread_id,
     detect_action_command,
+    dismiss_thread,
     find_all_threads,
     find_git_root,
     find_thread_by_id,
@@ -27,6 +29,15 @@ from inline_dialogue_mcp.server import (
 # Access underlying functions from FunctionTool wrappers
 _get_threads = get_threads.fn
 _respond_to_thread = respond_to_thread.fn
+_dismiss_thread = dismiss_thread.fn
+
+
+@pytest.fixture
+def mock_ctx():
+    """Create a mock Context that returns no roots (uses fallback path resolution)."""
+    ctx = MagicMock()
+    ctx.list_roots = AsyncMock(return_value=[])
+    return ctx
 
 
 class TestComputeThreadId:
@@ -247,7 +258,7 @@ class TestAutoSalting:
         assert threads[0]["id"] != threads[1]["id"]
         assert len(new_warnings) == 0
 
-    def test_get_threads_auto_salts_duplicates(self, tmp_path):
+    async def test_get_threads_auto_salts_duplicates(self, tmp_path, mock_ctx):
         """get_threads automatically salts duplicates and reports modified files."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
@@ -257,7 +268,7 @@ class TestAutoSalting:
             "def bar(): pass\n"
         )
 
-        result = _get_threads(str(test_file))
+        result = await _get_threads(str(test_file), mock_ctx)
 
         # Should have salted_files, not warnings
         assert "salted_files" in result
@@ -268,13 +279,13 @@ class TestAutoSalting:
         assert len(result["threads"]) == 2
         assert result["threads"][0]["id"] != result["threads"][1]["id"]
 
-    def test_get_threads_no_salting_when_unique(self, tmp_path):
+    async def test_get_threads_no_salting_when_unique(self, tmp_path, mock_ctx):
         """get_threads doesn't modify file when threads are unique."""
         test_file = tmp_path / "test.py"
         original_content = "// AUTHOR: Unique text\ndef foo(): pass\n"
         test_file.write_text(original_content)
 
-        result = _get_threads(str(test_file))
+        result = await _get_threads(str(test_file), mock_ctx)
 
         assert "salted_files" not in result
         assert "warnings" not in result
@@ -298,7 +309,7 @@ class TestAutoSalting:
 class TestLineDrift:
     """Tests for thread operations surviving line number changes."""
 
-    def test_reply_after_lines_added_above(self, tmp_path):
+    async def test_reply_after_lines_added_above(self, tmp_path, mock_ctx):
         """Reply succeeds after lines inserted above thread."""
         test_file = tmp_path / "test.py"
         original_content = (
@@ -337,7 +348,7 @@ class TestLineDrift:
         assert threads_after[0]["id"] == thread_id  # Same ID
 
         # Reply should still work via content-based location
-        result = _respond_to_thread(thread_id, "This looks fine", str(test_file))
+        result = await _respond_to_thread(thread_id, "This looks fine", str(test_file), mock_ctx)
 
         assert result["success"] is True
 
@@ -346,7 +357,7 @@ class TestLineDrift:
         assert "// AGENT: This looks fine" in final_content
         assert "// AUTHOR: " in final_content  # Blank author line added
 
-    def test_reply_after_lines_removed_above(self, tmp_path):
+    async def test_reply_after_lines_removed_above(self, tmp_path, mock_ctx):
         """Reply succeeds after lines removed above thread."""
         test_file = tmp_path / "test.py"
         original_content = (
@@ -381,7 +392,7 @@ class TestLineDrift:
         assert threads_after[0]["start_line"] == 3  # Line shifted
 
         # Reply should still work
-        result = _respond_to_thread(thread_id, "Still works", str(test_file))
+        result = await _respond_to_thread(thread_id, "Still works", str(test_file), mock_ctx)
         assert result["success"] is True
 
     def test_thread_id_stable_across_modifications(self, tmp_path):
@@ -432,7 +443,7 @@ class TestFindThreadLocation:
 class TestRespondToThread:
     """Tests for adding responses to threads."""
 
-    def test_basic_response(self, tmp_path):
+    async def test_basic_response(self, tmp_path, mock_ctx):
         """Adds AGENT response and blank AUTHOR line."""
         test_file = tmp_path / "test.py"
         test_file.write_text("// AUTHOR: Question?\ndef foo(): pass\n")
@@ -440,7 +451,7 @@ class TestRespondToThread:
         threads, _ = find_all_threads(test_file)
         thread_id = threads[0]["id"]
 
-        result = _respond_to_thread(thread_id, "Answer!", str(test_file))
+        result = await _respond_to_thread(thread_id, "Answer!", str(test_file), mock_ctx)
 
         assert result["success"] is True
         content = test_file.read_text()
@@ -450,7 +461,7 @@ class TestRespondToThread:
         assert lines[2] == "// AUTHOR: "
         assert lines[3] == "def foo(): pass"
 
-    def test_response_preserves_indentation(self, tmp_path):
+    async def test_response_preserves_indentation(self, tmp_path, mock_ctx):
         """Response preserves thread's existing indentation."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("func foo() {\n    // AUTHOR: Question?\n}\n")
@@ -458,7 +469,7 @@ class TestRespondToThread:
         threads, _ = find_all_threads(test_file)
         thread_id = threads[0]["id"]
 
-        result = _respond_to_thread(thread_id, "Answer!", str(test_file))
+        result = await _respond_to_thread(thread_id, "Answer!", str(test_file), mock_ctx)
 
         assert result["success"] is True
         content = test_file.read_text()
@@ -467,17 +478,17 @@ class TestRespondToThread:
         assert lines[2] == "    // AGENT: Answer!"
         assert lines[3] == "    // AUTHOR: "
 
-    def test_response_to_nonexistent_thread(self, tmp_path):
+    async def test_response_to_nonexistent_thread(self, tmp_path, mock_ctx):
         """Returns error for missing thread ID."""
         test_file = tmp_path / "test.py"
         test_file.write_text("def foo(): pass\n")
 
-        result = _respond_to_thread("nonexistent", "Response", str(test_file))
+        result = await _respond_to_thread("nonexistent", "Response", str(test_file), mock_ctx)
 
         assert result["success"] is False
         assert "not found" in result["error"]
 
-    def test_blocks_identical_duplicate_response(self, tmp_path):
+    async def test_blocks_identical_duplicate_response(self, tmp_path, mock_ctx):
         """Blocks identical duplicate response."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
@@ -491,7 +502,7 @@ class TestRespondToThread:
         thread_id = threads[0]["id"]
 
         # Attempting identical response should fail
-        result = _respond_to_thread(thread_id, "First answer", str(test_file))
+        result = await _respond_to_thread(thread_id, "First answer", str(test_file), mock_ctx)
 
         assert result["success"] is False
         assert "Duplicate response blocked" in result["error"]
@@ -500,7 +511,7 @@ class TestRespondToThread:
         content = test_file.read_text()
         assert content.count("// AGENT:") == 1
 
-    def test_warns_on_different_additional_response(self, tmp_path):
+    async def test_warns_on_different_additional_response(self, tmp_path, mock_ctx):
         """Allows different response but warns when thread awaiting user."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
@@ -514,7 +525,7 @@ class TestRespondToThread:
         thread_id = threads[0]["id"]
 
         # Different response should succeed with warning
-        result = _respond_to_thread(thread_id, "Additional clarification", str(test_file))
+        result = await _respond_to_thread(thread_id, "Additional clarification", str(test_file), mock_ctx)
 
         assert result["success"] is True
         assert "warning" in result
@@ -526,7 +537,7 @@ class TestRespondToThread:
         assert "First answer" in content
         assert "Additional clarification" in content
 
-    def test_response_preserves_multiline_thread(self, tmp_path):
+    async def test_response_preserves_multiline_thread(self, tmp_path, mock_ctx):
         """Response appends to existing multi-line thread."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
@@ -539,7 +550,7 @@ class TestRespondToThread:
         threads, _ = find_all_threads(test_file)
         thread_id = threads[0]["id"]
 
-        result = _respond_to_thread(thread_id, "Follow up answer", str(test_file))
+        result = await _respond_to_thread(thread_id, "Follow up answer", str(test_file), mock_ctx)
 
         assert result["success"] is True
         content = test_file.read_text()
@@ -760,40 +771,40 @@ class TestNormalizeAllInlineComments:
 class TestGetThreadsWithInlineComments:
     """Tests for get_threads with inline comment normalization."""
 
-    def test_get_threads_normalizes_inline_swift(self, tmp_path):
+    async def test_get_threads_normalizes_inline_swift(self, tmp_path, mock_ctx):
         """get_threads normalizes inline comments in Swift files."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("let x = 5 // AUTHOR: Is this ok?\n")
 
-        result = _get_threads(str(test_file))
+        result = await _get_threads(str(test_file), mock_ctx)
 
         assert "normalized_files" in result
         assert len(result["normalized_files"]) == 1
         assert len(result["threads"]) == 1
         assert result["threads"][0]["thread"][0]["text"] == "Is this ok?"
 
-    def test_get_threads_skips_python(self, tmp_path):
+    async def test_get_threads_skips_python(self, tmp_path, mock_ctx):
         """get_threads does not normalize Python files."""
         test_file = tmp_path / "test.py"
         # This has // AUTHOR: in a string - should NOT be normalized
         test_file.write_text('print("// AUTHOR: not real")\n')
 
-        result = _get_threads(str(test_file))
+        result = await _get_threads(str(test_file), mock_ctx)
 
         assert "normalized_files" not in result
         assert len(result["threads"]) == 0
 
-    def test_get_threads_no_normalization_needed(self, tmp_path):
+    async def test_get_threads_no_normalization_needed(self, tmp_path, mock_ctx):
         """get_threads doesn't report normalized_files when none needed."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: Already standalone\nlet x = 5\n")
 
-        result = _get_threads(str(test_file))
+        result = await _get_threads(str(test_file), mock_ctx)
 
         assert "normalized_files" not in result
         assert len(result["threads"]) == 1
 
-    def test_normalized_thread_is_found(self, tmp_path):
+    async def test_normalized_thread_is_found(self, tmp_path, mock_ctx):
         """After normalization, thread is properly detected."""
         test_file = tmp_path / "test.swift"
         test_file.write_text(
@@ -801,23 +812,23 @@ class TestGetThreadsWithInlineComments:
             "// AUTHOR: can't these be computed props?\n"
         )
 
-        result = _get_threads(str(test_file))
+        result = await _get_threads(str(test_file), mock_ctx)
 
         assert result["summary"]["total"] == 1
         thread = result["threads"][0]
         assert thread["thread"][0]["text"] == "can't these be computed props?"
 
-    def test_reply_to_normalized_thread(self, tmp_path):
+    async def test_reply_to_normalized_thread(self, tmp_path, mock_ctx):
         """Can reply to a thread that was normalized from inline."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("code() // AUTHOR: question\n")
 
         # Get threads (will normalize)
-        result = _get_threads(str(test_file))
+        result = await _get_threads(str(test_file), mock_ctx)
         thread_id = result["threads"][0]["id"]
 
         # Reply
-        reply_result = _respond_to_thread(thread_id, "Answer!", str(test_file))
+        reply_result = await _respond_to_thread(thread_id, "Answer!", str(test_file), mock_ctx)
 
         assert reply_result["success"] is True
         content = test_file.read_text()
@@ -848,21 +859,21 @@ class TestFindGitRoot:
 class TestOtherThreadsNotification:
     """Tests for other_threads notification in get_threads."""
 
-    def test_no_other_threads_field_without_git(self, tmp_path):
+    async def test_no_other_threads_field_without_git(self, tmp_path, mock_ctx):
         """No other_threads field when not in a git repo."""
         test_file = tmp_path / "test.py"
         test_file.write_text("// AUTHOR: Question?\ndef foo(): pass\n")
 
-        result = _get_threads(str(tmp_path))
+        result = await _get_threads(str(tmp_path), mock_ctx)
 
         assert "other_threads" not in result
 
-    def test_no_other_threads_when_scanning_root(self):
+    async def test_no_other_threads_when_scanning_root(self, mock_ctx):
         """No other_threads when scanning entire repo root."""
         # Use actual project directory (the repo root)
         project_dir = Path(__file__).parent.parent
 
-        result = _get_threads(str(project_dir))
+        result = await _get_threads(str(project_dir), mock_ctx)
 
         # When scanning root, there shouldn't be "other" threads
         assert "other_threads" not in result
@@ -871,12 +882,12 @@ class TestOtherThreadsNotification:
 class TestActionCommandDetection:
     """Tests for action_required field when AUTHOR uses command patterns."""
 
-    def test_done_command_detected(self, tmp_path):
+    async def test_done_command_detected(self, tmp_path, mock_ctx):
         """'done' triggers action_required with dismiss_thread."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: done\nfunc foo() {}\n")
 
-        result = _get_threads(str(test_file))
+        result = await _get_threads(str(test_file), mock_ctx)
 
         assert len(result["threads"]) == 1
         thread = result["threads"][0]
@@ -884,87 +895,87 @@ class TestActionCommandDetection:
         assert thread["action_required"]["action"] == "dismiss_thread"
         assert "COMMAND detected" in thread["action_required"]["note"]
 
-    def test_commit_command_detected(self, tmp_path):
+    async def test_commit_command_detected(self, tmp_path, mock_ctx):
         """'commit' triggers action_required with clear_and_commit."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: commit\nfunc foo() {}\n")
 
-        result = _get_threads(str(test_file))
+        result = await _get_threads(str(test_file), mock_ctx)
 
         thread = result["threads"][0]
         assert "action_required" in thread
         assert thread["action_required"]["action"] == "clear_and_commit"
 
-    def test_commit_file_command_detected(self, tmp_path):
+    async def test_commit_file_command_detected(self, tmp_path, mock_ctx):
         """'commit file' triggers action_required with clear_and_commit."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: commit file\nfunc foo() {}\n")
 
-        result = _get_threads(str(test_file))
+        result = await _get_threads(str(test_file), mock_ctx)
 
         thread = result["threads"][0]
         assert "action_required" in thread
         assert thread["action_required"]["action"] == "clear_and_commit"
 
-    def test_reset_command_detected(self, tmp_path):
+    async def test_reset_command_detected(self, tmp_path, mock_ctx):
         """'reset' triggers action_required with dismiss_thread."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: reset\nfunc foo() {}\n")
 
-        result = _get_threads(str(test_file))
+        result = await _get_threads(str(test_file), mock_ctx)
 
         thread = result["threads"][0]
         assert "action_required" in thread
         assert thread["action_required"]["action"] == "dismiss_thread"
 
-    def test_partial_match_not_detected(self, tmp_path):
+    async def test_partial_match_not_detected(self, tmp_path, mock_ctx):
         """Partial matches like 'done with refactoring' are NOT commands."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: done with the refactoring\nfunc foo() {}\n")
 
-        result = _get_threads(str(test_file))
+        result = await _get_threads(str(test_file), mock_ctx)
 
         thread = result["threads"][0]
         assert "action_required" not in thread
         assert thread["status"] == "awaiting_agent"
 
-    def test_commit_in_sentence_not_detected(self, tmp_path):
+    async def test_commit_in_sentence_not_detected(self, tmp_path, mock_ctx):
         """'commit to this approach' is NOT a command."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: I want to commit to this approach\nfunc foo() {}\n")
 
-        result = _get_threads(str(test_file))
+        result = await _get_threads(str(test_file), mock_ctx)
 
         thread = result["threads"][0]
         assert "action_required" not in thread
 
-    def test_case_insensitive_command(self, tmp_path):
+    async def test_case_insensitive_command(self, tmp_path, mock_ctx):
         """Commands are case-insensitive."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: DONE\nfunc foo() {}\n")
 
-        result = _get_threads(str(test_file))
+        result = await _get_threads(str(test_file), mock_ctx)
 
         thread = result["threads"][0]
         assert "action_required" in thread
         assert thread["action_required"]["action"] == "dismiss_thread"
 
-    def test_command_with_whitespace(self, tmp_path):
+    async def test_command_with_whitespace(self, tmp_path, mock_ctx):
         """Commands with leading/trailing whitespace still work."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR:   done   \nfunc foo() {}\n")
 
-        result = _get_threads(str(test_file))
+        result = await _get_threads(str(test_file), mock_ctx)
 
         thread = result["threads"][0]
         assert "action_required" in thread
 
-    def test_no_action_when_awaiting_author(self, tmp_path):
+    async def test_no_action_when_awaiting_author(self, tmp_path, mock_ctx):
         """No action_required when thread is awaiting author (empty AUTHOR line)."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: question?\n// AGENT: answer\n// AUTHOR: \nfunc foo() {}\n")
 
-        result = _get_threads(str(test_file))
+        result = await _get_threads(str(test_file), mock_ctx)
 
         thread = result["threads"][0]
         assert "action_required" not in thread
