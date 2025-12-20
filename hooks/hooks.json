@@ -2,9 +2,6 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": {
-          "tool_name": "Edit|Write|mcp__.*serena.*replace|mcp__.*serena.*insert"
-        },
         "hooks": [
           {
             "type": "command",
