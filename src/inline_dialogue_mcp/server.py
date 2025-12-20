@@ -8,7 +8,7 @@ import string
 import subprocess
 from pathlib import Path
 
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 
 mcp = FastMCP("inline-dialogue")
 
@@ -407,8 +407,24 @@ def find_thread_location(file_path: Path, first_author_text: str) -> int | None:
     return None
 
 
+async def resolve_path(path: str, ctx: Context) -> Path:
+    """Resolve path against client's root if relative."""
+    search_path = Path(path)
+    if not search_path.is_absolute():
+        try:
+            roots = await ctx.list_roots()
+            if roots:
+                base = str(roots[0].uri).replace("file://", "")
+                search_path = Path(base) / path
+        except Exception:
+            pass
+    if not search_path.is_absolute():
+        search_path = search_path.resolve()
+    return search_path
+
+
 @mcp.tool()
-def get_threads(path: str) -> dict:
+async def get_threads(path: str, ctx: Context) -> dict:
     """Find all AUTHOR/AGENT threads in the codebase.
 
     CRITICAL: Threads are READ-ONLY in the file. Never edit thread markers
@@ -419,12 +435,12 @@ def get_threads(path: str) -> dict:
     without calling respond_to_thread.
 
     Args:
-        path: Absolute path to directory or file to search (required).
+        path: Path to directory or file to search. Use "." for current project.
 
     Returns:
         Dictionary with threads list and summary counts.
     """
-    search_path = Path(path).resolve()
+    search_path = await resolve_path(path, ctx)
     if not search_path.exists():
         return {"error": f"Path not found: {path}"}
 
@@ -505,7 +521,7 @@ def get_threads(path: str) -> dict:
 
 
 @mcp.tool()
-def respond_to_thread(thread_id: str, response: str, path: str) -> dict:
+async def respond_to_thread(thread_id: str, response: str, path: str, ctx: Context) -> dict:
     """Add an AGENT response to a thread. Enforces formatting mechanically.
 
     This is the ONLY way to add AGENT responses. NEVER use Edit tool to add
@@ -515,12 +531,12 @@ def respond_to_thread(thread_id: str, response: str, path: str) -> dict:
     Args:
         thread_id: ID from get_threads.
         response: The response text (without // AGENT: prefix).
-        path: Directory or file to search for the thread. Use same path as get_threads.
+        path: Directory or file to search for the thread. Use "." for current project.
 
     Returns:
         Success status and file modified.
     """
-    search_path = Path(path).resolve()
+    search_path = await resolve_path(path, ctx)
     thread = find_thread_by_id(search_path, thread_id)
     if thread is None:
         return {"success": False, "error": f"Thread not found: {thread_id}"}
@@ -688,7 +704,7 @@ def clear_and_commit(file: str, message: str = "") -> dict:
 
 
 @mcp.tool()
-def dismiss_thread(thread_id: str, path: str) -> dict:
+async def dismiss_thread(thread_id: str, path: str, ctx: Context) -> dict:
     """Remove a single thread without committing.
 
     Only call when action_required says "done" or "reset".
@@ -696,12 +712,12 @@ def dismiss_thread(thread_id: str, path: str) -> dict:
 
     Args:
         thread_id: ID from get_threads.
-        path: Directory or file to search for the thread. Use same path as get_threads.
+        path: Directory or file to search for the thread. Use "." for current project.
 
     Returns:
         Success status, file modified, and lines removed.
     """
-    search_path = Path(path).resolve()
+    search_path = await resolve_path(path, ctx)
     thread = find_thread_by_id(search_path, thread_id)
     if thread is None:
         return {"success": False, "error": f"Thread not found: {thread_id}"}

@@ -66,8 +66,7 @@ Add an AGENT response to a thread. Enforces formatting mechanically.
 1. Locates thread by content hash (not line number - handles shifts from edits above)
 2. Normalizes existing formatting if needed (moves inline markers to own line, removes indentation)
 3. Appends `// AGENT: {response}` on own line, no indentation
-// AUTHOR: ` line after
-4. Adds blank `
+4. Adds blank `// AUTHOR: ` line after
 
 ---
 
@@ -96,8 +95,7 @@ Clear ALL thread markers from a file and commit that file only.
 
 ### Behavior
 
-// AUTHOR: ` and `// AGENT:` lines from the file
-1. Removes ALL `
+1. Removes ALL `// AUTHOR:` and `// AGENT:` lines from the file
 2. Stages only this file
 3. Commits with message
 4. Other staged files remain staged (not committed)
