@@ -18,7 +18,7 @@ Add to your Claude Code plugins directory or install via `claude plugins add`.
 inline-dialogue-plugin/
 ├── .claude-plugin/
 │   └── plugin.json           # Plugin manifest
-├── mcp/
+├── src/
 │   └── inline_dialogue_mcp/  # MCP server code
 ├── hooks/
 │   ├── hooks.json            # Hook configuration
