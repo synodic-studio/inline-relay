@@ -2,9 +2,11 @@
 """
 Pre-tool-use hook for inline-dialogue thread edit guards.
 
-Detects and warns about edits that could corrupt AUTHOR/AGENT thread structure:
-1. Manual addition of // AGENT: or // AUTHOR: lines (should use MCP tools)
-2. Destructive edits that remove thread markers (thread history destruction)
+Detects and BLOCKS edits that could corrupt AUTHOR/AGENT thread structure:
+1. Any Edit that touches thread markers (in old_string or new_string)
+2. Any Write to a file that contains thread markers
+
+Thread markers are READ-ONLY. Use MCP tools to modify them.
 
 ESCAPE HATCH: Set environment variable INLINE_DIALOGUE_ALLOW_DESTRUCTIVE=1
 to bypass blocking (for emergencies when MCP is broken).
@@ -25,196 +27,128 @@ def emit_warning(message: str) -> None:
     print(message, file=sys.stderr)
 
 
-def is_manual_thread_edit(tool_input: dict) -> bool:
+def edit_touches_thread_markers(tool_input: dict) -> bool:
     """
-    Detect Edit tool being used to manually add // AGENT: or // AUTHOR: lines.
+    Detect Edit tool touching ANY thread markers (old or new string).
 
-    These should be added via the inline-dialogue MCP tools, not manually.
-    The MCP tools handle:
-    - Proper formatting
-    - Automatic blank // AUTHOR: line after responses
-    - Indentation preservation
-    - Duplicate prevention
+    Thread markers are READ-ONLY. Any edit that involves them should be blocked.
+    Use MCP tools (respond_to_thread, dismiss_thread) instead.
 
     Args:
         tool_input: The tool's input parameters
 
     Returns:
-        True if this edit is manually adding thread markers
-    """
-    new_string = tool_input.get("new_string", "")
-    return "// AGENT:" in new_string or "// AUTHOR:" in new_string
-
-
-def is_thread_destructive_edit(tool_input: dict) -> bool:
-    """
-    Detect Edit tool destroying thread history by removing markers.
-
-    This catches the "summarization" anti-pattern where agents replace
-    a multi-line thread conversation with a condensed version.
-
-    Thread markers are conversation history - they should NEVER be edited
-    or removed except via the MCP dismiss_thread tool.
-
-    Args:
-        tool_input: The tool's input parameters
-
-    Returns:
-        True if this edit removes thread markers (destructive)
+        True if this edit involves thread markers in any way
     """
     old_string = tool_input.get("old_string", "")
     new_string = tool_input.get("new_string", "")
 
-    # Count markers in old vs new
-    old_author = old_string.count("// AUTHOR:")
-    old_agent = old_string.count("// AGENT:")
-    new_author = new_string.count("// AUTHOR:")
-    new_agent = new_string.count("// AGENT:")
+    has_markers_old = "// AUTHOR:" in old_string or "// AGENT:" in old_string
+    has_markers_new = "// AUTHOR:" in new_string or "// AGENT:" in new_string
 
-    old_total = old_author + old_agent
-    new_total = new_author + new_agent
-
-    # Destructive if old had thread markers and new has fewer
-    # This catches both partial removal AND complete deletion
-    if old_total > 0 and new_total < old_total:
-        return True
-
-    return False
+    return has_markers_old or has_markers_new
 
 
 def validate_thread_edit(tool_input: dict) -> dict | None:
     """
     Validate Edit tool operations for thread safety.
 
-    Returns block decision for destructive edits, None otherwise.
-
-    Warns (but allows) manual addition of thread markers.
-    BLOCKS edits that remove thread markers.
+    BLOCKS any edit that touches thread markers (in old_string or new_string).
+    Thread markers are completely read-only via Edit tool.
 
     Args:
         tool_input: The tool's input parameters
 
     Returns:
-        Block decision dict if destructive, None if allowed
+        Block decision dict if touches threads, None if allowed
     """
-    if is_manual_thread_edit(tool_input):
+    if edit_touches_thread_markers(tool_input):
         emit_warning("=" * 60)
-        emit_warning("⚠️  Manual thread edit detected!")
+        emit_warning("🚫 BLOCKED: Edit touches thread markers!")
         emit_warning("")
-        emit_warning("You're adding // AGENT: or // AUTHOR: lines manually.")
-        emit_warning("Prefer the inline-dialogue MCP tool:")
-        emit_warning("  respond_to_thread(thread_id, response, path)")
+        emit_warning("Thread markers (// AUTHOR: and // AGENT:) are READ-ONLY.")
+        emit_warning("You cannot add, edit, or remove them via the Edit tool.")
         emit_warning("")
-        emit_warning("The MCP tool automatically:")
-        emit_warning("  • Adds properly formatted // AGENT: line")
-        emit_warning("  • Appends blank // AUTHOR: line for next response")
-        emit_warning("  • Preserves thread indentation")
-        emit_warning("  • Prevents duplicate responses")
-        emit_warning("")
-        emit_warning("Allowing operation - use MCP tools next time.")
-        emit_warning("=" * 60)
-
-    if is_thread_destructive_edit(tool_input):
-        emit_warning("=" * 60)
-        emit_warning("🚫 BLOCKED: Thread history destruction!")
-        emit_warning("")
-        emit_warning("This edit removes // AUTHOR: or // AGENT: lines.")
-        emit_warning("Thread markers are READ-ONLY conversation history.")
-        emit_warning("")
-        emit_warning("NEVER:")
-        emit_warning("  • Delete or 'clean up' thread comments")
-        emit_warning("  • Summarize or condense thread conversations")
-        emit_warning("  • Replace multiple thread lines with fewer")
-        emit_warning("  • Edit existing AUTHOR/AGENT text")
-        emit_warning("")
-        emit_warning("To remove a thread (when user says 'done' or 'reset'):")
-        emit_warning("  dismiss_thread(thread_id, path)")
+        emit_warning("Use the inline-dialogue MCP tools instead:")
+        emit_warning("  • respond_to_thread(thread_id, response, path)")
+        emit_warning("  • dismiss_thread(thread_id, path)")
+        emit_warning("  • clear_and_commit(file, message)")
         emit_warning("=" * 60)
 
         if is_bypass_enabled():
             emit_warning("")
-            emit_warning("⚠️  BYPASS ENABLED - allowing destructive edit")
+            emit_warning("⚠️  BYPASS ENABLED - allowing edit")
             emit_warning("    (INLINE_DIALOGUE_ALLOW_DESTRUCTIVE=1)")
             return None
 
         return {
             "decision": "block",
-            "reason": "Edit removes AUTHOR/AGENT thread markers. Use dismiss_thread() MCP tool instead."
+            "reason": "Edit touches AUTHOR/AGENT thread markers. Use MCP tools (respond_to_thread, dismiss_thread) instead."
         }
 
     return None
 
 
-def is_write_destructive(tool_input: dict) -> bool:
+def file_has_thread_markers(file_path: str) -> bool:
     """
-    Detect Write tool destroying thread history by overwriting file with fewer markers.
+    Check if an existing file contains any thread markers.
 
     Args:
-        tool_input: The tool's input parameters (file_path, content)
+        file_path: Path to the file to check
 
     Returns:
-        True if this write removes thread markers (destructive)
+        True if file exists and contains thread markers
     """
-    file_path = tool_input.get("file_path", "")
-    new_content = tool_input.get("content", "")
-
     if not file_path:
         return False
 
-    # Read existing file content
     try:
         with open(file_path, "r") as f:
-            old_content = f.read()
+            content = f.read()
     except (OSError, FileNotFoundError):
-        # File doesn't exist yet - can't be destructive
+        # File doesn't exist yet - no markers to protect
         return False
 
-    # Count markers in old vs new
-    old_author = old_content.count("// AUTHOR:")
-    old_agent = old_content.count("// AGENT:")
-    new_author = new_content.count("// AUTHOR:")
-    new_agent = new_content.count("// AGENT:")
-
-    old_total = old_author + old_agent
-    new_total = new_author + new_agent
-
-    # Destructive if old had thread markers and new has fewer
-    if old_total > 0 and new_total < old_total:
-        return True
-
-    return False
+    return "// AUTHOR:" in content or "// AGENT:" in content
 
 
 def validate_write(tool_input: dict) -> dict | None:
     """
     Validate Write tool operations for thread safety.
 
-    Returns block decision for destructive writes, None otherwise.
+    BLOCKS any write to a file that currently contains thread markers.
+    Thread files are completely read-only via Write tool.
 
     Args:
         tool_input: The tool's input parameters
 
     Returns:
-        Block decision dict if destructive, None if allowed
+        Block decision dict if file has threads, None if allowed
     """
-    if is_write_destructive(tool_input):
+    file_path = tool_input.get("file_path", "")
+
+    if file_has_thread_markers(file_path):
         emit_warning("=" * 60)
-        emit_warning("🚫 BLOCKED: Thread history destruction via Write!")
+        emit_warning("🚫 BLOCKED: Write to file with thread markers!")
         emit_warning("")
-        emit_warning("This Write would remove // AUTHOR: or // AGENT: lines.")
-        emit_warning("Thread markers are READ-ONLY conversation history.")
+        emit_warning("This file contains // AUTHOR: or // AGENT: markers.")
+        emit_warning("Files with thread markers are READ-ONLY via Write tool.")
         emit_warning("")
-        emit_warning("To remove a thread (when user says 'done' or 'reset'):")
-        emit_warning("  dismiss_thread(thread_id, path)")
+        emit_warning("Use the inline-dialogue MCP tools instead:")
+        emit_warning("  • respond_to_thread(thread_id, response, path)")
+        emit_warning("  • dismiss_thread(thread_id, path)")
+        emit_warning("  • clear_and_commit(file, message)")
         emit_warning("=" * 60)
 
         if is_bypass_enabled():
-            emit_warning("⚠️  BYPASS ENABLED - allowing destructive write")
+            emit_warning("")
+            emit_warning("⚠️  BYPASS ENABLED - allowing write")
+            emit_warning("    (INLINE_DIALOGUE_ALLOW_DESTRUCTIVE=1)")
             return None
 
         return {
             "decision": "block",
-            "reason": "Write removes AUTHOR/AGENT thread markers. Use dismiss_thread() MCP tool instead."
+            "reason": "File contains AUTHOR/AGENT thread markers. Use MCP tools (respond_to_thread, dismiss_thread) instead."
         }
 
     return None
