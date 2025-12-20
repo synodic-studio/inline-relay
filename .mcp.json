@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "inline-dialogue": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "${CLAUDE_PLUGIN_ROOT}",
+        "run",
+        "inline-dialogue-mcp"
+      ]
+    }
+  }
+}

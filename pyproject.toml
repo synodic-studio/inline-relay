@@ -17,11 +17,14 @@ dev = [
 [project.scripts]
 inline-dialogue-mcp = "inline_dialogue_mcp.server:mcp.run"
 
+[tool.setuptools]
+package-dir = {"" = "mcp"}
+
 [tool.uv]
 package = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["mcp"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
