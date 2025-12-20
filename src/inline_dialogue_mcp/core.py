@@ -164,6 +164,26 @@ def compute_thread_id(file_path: str, first_author_text: str) -> str:
     return hashlib.sha256(content.encode()).hexdigest()[:8]
 
 
+def strip_empty_trailing_author(thread_entries: list[dict]) -> list[dict]:
+    """Remove trailing empty author entry from thread.
+
+    The empty // AUTHOR: line is a cursor placeholder in the file,
+    not actual conversation content. Don't include it in the JSON response.
+
+    Args:
+        thread_entries: List of thread entries with role/line/text.
+
+    Returns:
+        Thread entries with trailing empty author removed.
+    """
+    if not thread_entries:
+        return thread_entries
+    last = thread_entries[-1]
+    if last["role"] == "author" and not last["text"]:
+        return thread_entries[:-1]
+    return thread_entries
+
+
 def detect_action_command(last_author_text: str) -> dict | None:
     """Detect if AUTHOR text is a command requiring immediate action.
 
@@ -239,11 +259,14 @@ def find_threads_in_file(file_path: Path) -> list[dict]:
             else:
                 status = "awaiting_author"
 
+            # Strip empty trailing author (it's a placeholder, not content)
+            display_thread = strip_empty_trailing_author(current_thread["thread"])
+
             thread_data = {
                 "id": thread_id,
                 "file": current_thread["file"],
                 "start_line": current_thread["start_line"],
-                "thread": current_thread["thread"],
+                "thread": display_thread,
                 "status": status,
             }
 
@@ -267,11 +290,14 @@ def find_threads_in_file(file_path: Path) -> list[dict]:
         else:
             status = "awaiting_author"
 
+        # Strip empty trailing author (it's a placeholder, not content)
+        display_thread = strip_empty_trailing_author(current_thread["thread"])
+
         thread_data = {
             "id": thread_id,
             "file": current_thread["file"],
             "start_line": current_thread["start_line"],
-            "thread": current_thread["thread"],
+            "thread": display_thread,
             "status": status,
         }
 
