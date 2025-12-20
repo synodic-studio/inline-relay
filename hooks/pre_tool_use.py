@@ -6,12 +6,18 @@ Detects and warns about edits that could corrupt AUTHOR/AGENT thread structure:
 1. Manual addition of // AGENT: or // AUTHOR: lines (should use MCP tools)
 2. Destructive edits that remove thread markers (thread history destruction)
 
-These are warnings rather than blocks to allow manual intervention
-if the MCP server is broken or misconfigured.
+ESCAPE HATCH: Set environment variable INLINE_DIALOGUE_ALLOW_DESTRUCTIVE=1
+to bypass blocking (for emergencies when MCP is broken).
 """
 
 import json
+import os
 import sys
+
+
+def is_bypass_enabled() -> bool:
+    """Check if destructive edit bypass is enabled via environment variable."""
+    return os.environ.get("INLINE_DIALOGUE_ALLOW_DESTRUCTIVE", "").strip() == "1"
 
 
 def emit_warning(message: str) -> None:
@@ -124,6 +130,13 @@ def validate_thread_edit(tool_input: dict) -> dict | None:
         emit_warning("To remove a thread (when user says 'done' or 'reset'):")
         emit_warning("  dismiss_thread(thread_id, path)")
         emit_warning("=" * 60)
+
+        if is_bypass_enabled():
+            emit_warning("")
+            emit_warning("⚠️  BYPASS ENABLED - allowing destructive edit")
+            emit_warning("    (INLINE_DIALOGUE_ALLOW_DESTRUCTIVE=1)")
+            return None
+
         return {
             "decision": "block",
             "reason": "Edit removes AUTHOR/AGENT thread markers. Use dismiss_thread() MCP tool instead."
