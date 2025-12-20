@@ -145,18 +145,100 @@ def validate_thread_edit(tool_input: dict) -> dict | None:
     return None
 
 
+def is_write_destructive(tool_input: dict) -> bool:
+    """
+    Detect Write tool destroying thread history by overwriting file with fewer markers.
+
+    Args:
+        tool_input: The tool's input parameters (file_path, content)
+
+    Returns:
+        True if this write removes thread markers (destructive)
+    """
+    file_path = tool_input.get("file_path", "")
+    new_content = tool_input.get("content", "")
+
+    if not file_path:
+        return False
+
+    # Read existing file content
+    try:
+        with open(file_path, "r") as f:
+            old_content = f.read()
+    except (OSError, FileNotFoundError):
+        # File doesn't exist yet - can't be destructive
+        return False
+
+    # Count markers in old vs new
+    old_author = old_content.count("// AUTHOR:")
+    old_agent = old_content.count("// AGENT:")
+    new_author = new_content.count("// AUTHOR:")
+    new_agent = new_content.count("// AGENT:")
+
+    old_total = old_author + old_agent
+    new_total = new_author + new_agent
+
+    # Destructive if old had thread markers and new has fewer
+    if old_total > 0 and new_total < old_total:
+        return True
+
+    return False
+
+
+def validate_write(tool_input: dict) -> dict | None:
+    """
+    Validate Write tool operations for thread safety.
+
+    Returns block decision for destructive writes, None otherwise.
+
+    Args:
+        tool_input: The tool's input parameters
+
+    Returns:
+        Block decision dict if destructive, None if allowed
+    """
+    if is_write_destructive(tool_input):
+        emit_warning("=" * 60)
+        emit_warning("🚫 BLOCKED: Thread history destruction via Write!")
+        emit_warning("")
+        emit_warning("This Write would remove // AUTHOR: or // AGENT: lines.")
+        emit_warning("Thread markers are READ-ONLY conversation history.")
+        emit_warning("")
+        emit_warning("To remove a thread (when user says 'done' or 'reset'):")
+        emit_warning("  dismiss_thread(thread_id, path)")
+        emit_warning("=" * 60)
+
+        if is_bypass_enabled():
+            emit_warning("⚠️  BYPASS ENABLED - allowing destructive write")
+            return None
+
+        return {
+            "decision": "block",
+            "reason": "Write removes AUTHOR/AGENT thread markers. Use dismiss_thread() MCP tool instead."
+        }
+
+    return None
+
+
 def main():
     """Process pre-tool-use hook for thread edit guards."""
     # Read hook input from stdin
     hook_input = json.load(sys.stdin)
 
+    tool_name = hook_input.get("tool_name", "")
     tool_input = hook_input.get("tool_input", {})
 
-    # Validate thread edits - returns block decision or None
-    block_result = validate_thread_edit(tool_input)
+    block_result = None
+
+    if tool_name == "Edit":
+        # Validate Edit tool operations
+        block_result = validate_thread_edit(tool_input)
+    elif tool_name == "Write":
+        # Validate Write tool operations
+        block_result = validate_write(tool_input)
 
     if block_result:
-        # Destructive edit detected - block it
+        # Destructive operation detected - block it
         print(json.dumps(block_result))
         return 1
 
