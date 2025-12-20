@@ -20,6 +20,7 @@ from inline_dialogue_mcp.core import (
     normalize_all_inline_comments,
     normalize_inline_comments,
     salt_duplicate_threads,
+    strip_empty_trailing_author,
     uses_slash_comments,
 )
 from inline_dialogue_mcp.server import (
@@ -102,7 +103,7 @@ class TestFindThreadsInFile:
         assert threads[0]["thread"][1]["role"] == "agent"
 
     def test_awaiting_user_status(self, tmp_path):
-        """Thread ending with empty AUTHOR has awaiting_user status."""
+        """Thread ending with empty AUTHOR has awaiting_author status."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
             "// AUTHOR: Question?\n"
@@ -115,6 +116,9 @@ class TestFindThreadsInFile:
 
         assert len(threads) == 1
         assert threads[0]["status"] == "awaiting_author"
+        # Empty trailing author is a placeholder, not shown in response
+        assert len(threads[0]["thread"]) == 2
+        assert threads[0]["thread"][-1]["role"] == "agent"
 
     def test_multiple_threads(self, tmp_path):
         """Detects multiple separate threads."""
@@ -140,6 +144,51 @@ class TestFindThreadsInFile:
         threads = find_threads_in_file(test_file)
 
         assert threads == []
+
+
+class TestStripEmptyTrailingAuthor:
+    """Tests for stripping empty trailing author entries."""
+
+    def test_strips_empty_trailing_author(self):
+        """Removes empty author at end of thread."""
+        thread = [
+            {"role": "author", "line": 1, "text": "Question?"},
+            {"role": "agent", "line": 2, "text": "Answer"},
+            {"role": "author", "line": 3, "text": ""},
+        ]
+        result = strip_empty_trailing_author(thread)
+        assert len(result) == 2
+        assert result[-1]["role"] == "agent"
+
+    def test_keeps_nonempty_trailing_author(self):
+        """Does not strip author with content."""
+        thread = [
+            {"role": "author", "line": 1, "text": "Question?"},
+            {"role": "agent", "line": 2, "text": "Answer"},
+            {"role": "author", "line": 3, "text": "Follow-up"},
+        ]
+        result = strip_empty_trailing_author(thread)
+        assert len(result) == 3
+        assert result[-1]["text"] == "Follow-up"
+
+    def test_keeps_trailing_agent(self):
+        """Does not strip when thread ends with agent."""
+        thread = [
+            {"role": "author", "line": 1, "text": "Question?"},
+            {"role": "agent", "line": 2, "text": "Answer"},
+        ]
+        result = strip_empty_trailing_author(thread)
+        assert len(result) == 2
+
+    def test_handles_empty_thread(self):
+        """Returns empty list for empty input."""
+        assert strip_empty_trailing_author([]) == []
+
+    def test_single_empty_author_stripped(self):
+        """Single empty author entry results in empty thread."""
+        thread = [{"role": "author", "line": 1, "text": ""}]
+        result = strip_empty_trailing_author(thread)
+        assert len(result) == 0
 
 
 class TestSaltGeneration:
