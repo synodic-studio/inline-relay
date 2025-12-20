@@ -68,26 +68,28 @@ def is_thread_destructive_edit(tool_input: dict) -> bool:
     old_total = old_author + old_agent
     new_total = new_author + new_agent
 
-    # Destructive if:
-    # 1. Old had thread markers
-    # 2. New has fewer markers (not just removing all)
-    # 3. New still has some markers (replacement, not deletion)
-    if old_total > 0 and new_total < old_total and new_total > 0:
+    # Destructive if old had thread markers and new has fewer
+    # This catches both partial removal AND complete deletion
+    if old_total > 0 and new_total < old_total:
         return True
 
     return False
 
 
-def validate_thread_edit(tool_input: dict) -> None:
+def validate_thread_edit(tool_input: dict) -> dict | None:
     """
     Validate Edit tool operations for thread safety.
 
-    Emits warnings (not blocks) for:
-    - Manual addition of // AGENT: or // AUTHOR: lines
-    - Destructive edits that remove thread markers
+    Returns block decision for destructive edits, None otherwise.
+
+    Warns (but allows) manual addition of thread markers.
+    BLOCKS edits that remove thread markers.
 
     Args:
         tool_input: The tool's input parameters
+
+    Returns:
+        Block decision dict if destructive, None if allowed
     """
     if is_manual_thread_edit(tool_input):
         emit_warning("=" * 60)
@@ -108,21 +110,26 @@ def validate_thread_edit(tool_input: dict) -> None:
 
     if is_thread_destructive_edit(tool_input):
         emit_warning("=" * 60)
-        emit_warning("⚠️  Thread history destruction detected!")
+        emit_warning("🚫 BLOCKED: Thread history destruction!")
         emit_warning("")
         emit_warning("This edit removes // AUTHOR: or // AGENT: lines.")
         emit_warning("Thread markers are READ-ONLY conversation history.")
         emit_warning("")
         emit_warning("NEVER:")
+        emit_warning("  • Delete or 'clean up' thread comments")
         emit_warning("  • Summarize or condense thread conversations")
         emit_warning("  • Replace multiple thread lines with fewer")
         emit_warning("  • Edit existing AUTHOR/AGENT text")
         emit_warning("")
         emit_warning("To remove a thread (when user says 'done' or 'reset'):")
         emit_warning("  dismiss_thread(thread_id, path)")
-        emit_warning("")
-        emit_warning("Allowing operation - this may destroy conversation history!")
         emit_warning("=" * 60)
+        return {
+            "decision": "block",
+            "reason": "Edit removes AUTHOR/AGENT thread markers. Use dismiss_thread() MCP tool instead."
+        }
+
+    return None
 
 
 def main():
@@ -132,12 +139,16 @@ def main():
 
     tool_input = hook_input.get("tool_input", {})
 
-    # Validate thread edits (emits warnings if issues found)
-    validate_thread_edit(tool_input)
+    # Validate thread edits - returns block decision or None
+    block_result = validate_thread_edit(tool_input)
 
-    # Always approve - warnings are informational only
-    result = {"decision": "approve"}
-    print(json.dumps(result))
+    if block_result:
+        # Destructive edit detected - block it
+        print(json.dumps(block_result))
+        return 1
+
+    # Allow the operation
+    print(json.dumps({"decision": "approve"}))
     return 0
 
 
