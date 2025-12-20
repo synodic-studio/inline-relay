@@ -5,54 +5,65 @@ Claude Code plugin for AUTHOR/AGENT inline code review threads.
 ## Overview
 
 This plugin provides:
-- **MCP server** with tools for scanning, reading, and responding to inline dialogue threads
-- **Edit guards** (hooks) to prevent corruption of thread structure
+- **Command** `/inline-dialogue:process` - Kick off thread processing workflow
+- **Skill** - Behavioral guidance for working with threads (loads contextually)
+- **MCP server** - Tools for scanning, reading, and responding to threads
+- **Edit guards** (hooks) - Warnings to prevent thread corruption
 
 ## Installation
 
 Add to your Claude Code plugins directory or install via `claude plugins add`.
 
+## Usage
+
+```
+/inline-dialogue:process [path]
+```
+
+Scans for threads and processes all `awaiting_agent` threads until none remain.
+
 ## Structure
 
 ```
 inline-dialogue-plugin/
-├── .claude-plugin/
-│   └── plugin.json           # Plugin manifest
-├── src/
-│   └── inline_dialogue_mcp/  # MCP server code
+├── .claude-plugin/plugin.json
+├── commands/
+│   └── process.md              # /inline-dialogue:process command
+├── skills/
+│   └── inline-dialogue-workflow/
+│       └── SKILL.md            # Behavioral guidance
 ├── hooks/
-│   ├── hooks.json            # Hook configuration
-│   └── pre_tool_use.py       # Thread edit guards
-├── .mcp.json                  # MCP server config
-└── pyproject.toml             # Python package definition
+│   ├── hooks.json
+│   └── pre_tool_use.py         # Thread edit guards
+├── src/
+│   └── inline_dialogue_mcp/    # MCP server code
+├── .mcp.json
+└── pyproject.toml
 ```
 
 ## MCP Tools
 
-- `scan_for_threads` - Find all AUTHOR/AGENT threads in a directory
-- `get_thread` - Read a specific thread's content and history
-- `respond_to_thread` - Add a new response to an existing thread
+- `get_threads` - Find all AUTHOR/AGENT threads in a directory
+- `respond_to_thread` - Add a response to a thread
+- `dismiss_thread` - Remove a completed thread
+- `clear_and_commit` - Remove thread and commit file
 
 ## Thread Format
 
-Threads are inline code comments with this structure:
+Threads are inline code comments:
 
 ```swift
 // AUTHOR: Why is this method so slow?
 // AGENT: The current implementation has O(n²) complexity...
 // AUTHOR: Can we optimize it?
-// AGENT[action_required]: Yes, I'll refactor to use a hash map.
+// AGENT: Done. Refactored to use a hash map - now O(n).
+// AUTHOR:
 ```
 
 ## Development
 
 ```bash
-# Install dependencies
-uv sync
-
-# Run tests
-uv run pytest
-
-# Run MCP server directly
-uv run inline-dialogue-mcp
+uv sync              # Install dependencies
+uv run pytest        # Run tests
+uv run inline-dialogue-mcp  # Run MCP server directly
 ```
