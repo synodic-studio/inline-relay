@@ -16,7 +16,7 @@ Scan for and process all AUTHOR/AGENT threads in the codebase.
 
 ## Workflow
 
-1. `get_threads(path)` - Find all threads (default: "." for current working directory)
+1. `get_threads(path)` - Find all threads using the exact path provided by the user (file or directory). If no path given, use "."
 2. For each thread:
    - If `action_required`: execute via MCP tool (`dismiss_thread(thread_id, path)` or `clear_and_commit(thread_id, path, message)`)
    - If `awaiting_agent`: read context, make changes with Edit, then `respond_to_thread(thread_id, response, path)`
@@ -25,4 +25,4 @@ Scan for and process all AUTHOR/AGENT threads in the codebase.
 
 ## Arguments
 
-- `path` (optional): Directory to scan. Defaults to current working directory.
+- `path` (optional): File or directory to scan. **IMPORTANT**: If a path is provided, pass it exactly to `get_threads(path)`. Only use "." if no path argument was given.
