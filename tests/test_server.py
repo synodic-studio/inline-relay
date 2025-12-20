@@ -5,25 +5,27 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from inline_dialogue_mcp.server import (
+from inline_dialogue_mcp.core import (
     INLINE_AUTHOR_PATTERN,
     SALT_PATTERN,
     SLASH_COMMENT_EXTENSIONS,
     compute_thread_id,
     detect_action_command,
-    dismiss_thread,
     find_all_threads,
     find_git_root,
     find_thread_by_id,
     find_thread_location,
     find_threads_in_file,
     generate_salt,
-    get_threads,
     normalize_all_inline_comments,
     normalize_inline_comments,
-    respond_to_thread,
     salt_duplicate_threads,
     uses_slash_comments,
+)
+from inline_dialogue_mcp.server import (
+    dismiss_thread,
+    get_threads,
+    respond_to_thread,
 )
 
 # Access underlying functions from FunctionTool wrappers
