@@ -2,7 +2,8 @@
 """
 Stop hook for inline-dialogue plugin.
 
-Commits and pushes the threads.db database at session end.
+Commits the threads.db database on stop. Push happens at session end
+via synodic-kit's stop.py which handles the whole claude-session-db repo.
 """
 
 import sqlite3
@@ -33,8 +34,8 @@ def get_db_stats() -> dict:
     return stats
 
 
-def commit_and_push_threads_db() -> None:
-    """Commit and push the threads.db database."""
+def commit_threads_db() -> None:
+    """Commit the threads.db database (no push - that happens via synodic-kit)."""
     if not DB_REPO.exists():
         return
 
@@ -77,15 +78,7 @@ def commit_and_push_threads_db() -> None:
             check=True,
         )
 
-        subprocess.run(
-            ["git", "push"],
-            cwd=str(DB_REPO),
-            capture_output=True,
-            timeout=60,
-            check=True,
-        )
-
-        print(f"✅ Thread log pushed ({stats['total']} events)", file=sys.stderr)
+        print(f"✅ Thread log committed ({stats['total']} events)", file=sys.stderr)
 
     except subprocess.CalledProcessError as e:
         print(f"⚠️  Thread log commit failed: {e}", file=sys.stderr)
@@ -95,7 +88,7 @@ def commit_and_push_threads_db() -> None:
 
 def main():
     """Main entry point for Stop hook."""
-    commit_and_push_threads_db()
+    commit_threads_db()
     sys.exit(0)
 
 
