@@ -31,18 +31,16 @@ def get_plugin_root() -> str | None:
         return None
 
 
-def is_inline_dialogue_plugin_dir(directory: str) -> bool:
-    """Check if a directory is an inline-dialogue plugin (installed or development).
+def is_inline_dialogue_dev_directory(directory: str) -> bool:
+    """Check if a directory is an inline-dialogue plugin development directory.
     
-    Identifies plugin directories by checking for:
-    - .claude-plugin/plugin.json with name containing "inline-dialogue"
-    - Or being within the installed plugin cache path
+    Identifies by checking for .claude-plugin/plugin.json with name containing
+    "inline-dialogue".
     """
     if not directory or not os.path.isdir(directory):
         return False
     
     try:
-        # Check for .claude-plugin/plugin.json marker
         plugin_json = os.path.join(directory, ".claude-plugin", "plugin.json")
         if os.path.exists(plugin_json):
             with open(plugin_json, "r") as f:
@@ -50,24 +48,20 @@ def is_inline_dialogue_plugin_dir(directory: str) -> bool:
                 data = json.load(f)
                 if "inline-dialogue" in data.get("name", "").lower():
                     return True
-        
-        # Check if it's in the installed plugin cache
-        if "inline-dialogue" in directory and ".claude/plugins/cache" in directory:
-            return True
-            
         return False
     except Exception:
         return False
 
 
 def is_within_plugin(file_path: str) -> bool:
-    """Check if file_path is within any inline-dialogue plugin directory.
+    """Check if file_path is within the plugin directory itself.
 
     When developing the plugin, we want to allow edits to plugin files
     (like SKILL.md with example markers) without blocking.
     
-    This checks BOTH the installed plugin directory AND any development
-    directories that have inline-dialogue plugin structure.
+    Allows edits when:
+    1. File is within the installed plugin (where this hook runs from), OR
+    2. CWD is an inline-dialogue dev directory AND file is within CWD
     """
     if not file_path:
         return False
@@ -80,17 +74,12 @@ def is_within_plugin(file_path: str) -> bool:
         if plugin_root and abs_file.startswith(plugin_root + os.sep):
             return True
         
-        # Walk up the directory tree to find a plugin root
-        current = os.path.dirname(abs_file)
-        checked = set()
-        while current and current not in checked:
-            checked.add(current)
-            if is_inline_dialogue_plugin_dir(current):
+        # Check if CWD is an inline-dialogue dev directory and file is within it
+        cwd = os.getcwd()
+        if is_inline_dialogue_dev_directory(cwd):
+            abs_cwd = os.path.abspath(cwd)
+            if abs_file.startswith(abs_cwd + os.sep):
                 return True
-            parent = os.path.dirname(current)
-            if parent == current:  # Reached filesystem root
-                break
-            current = parent
         
         return False
     except Exception:

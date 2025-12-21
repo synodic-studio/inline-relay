@@ -627,34 +627,6 @@ class TestResponseWarnings:
         assert "warning" in result
         assert "future-tense" in result["warning"]
 
-    async def test_vague_done_warning(self, tmp_path, mock_ctx):
-        """Warns about vague 'Done' response."""
-        test_file = tmp_path / "test.py"
-        test_file.write_text("// AUTHOR: Fix this bug\ndef foo(): pass\n")
-
-        threads, _ = find_all_threads(test_file)
-        thread_id = threads[0]["id"]
-
-        result = await _respond_to_thread(thread_id, "Done.", str(test_file), mock_ctx)
-
-        assert result["success"] is True
-        assert "warning" in result
-        assert "vague" in result["warning"].lower()
-
-    async def test_vague_fixed_warning(self, tmp_path, mock_ctx):
-        """Warns about vague 'Fixed' response."""
-        test_file = tmp_path / "test.py"
-        test_file.write_text("// AUTHOR: Fix this bug\ndef foo(): pass\n")
-
-        threads, _ = find_all_threads(test_file)
-        thread_id = threads[0]["id"]
-
-        result = await _respond_to_thread(thread_id, "Fixed it", str(test_file), mock_ctx)
-
-        assert result["success"] is True
-        assert "warning" in result
-        assert "vague" in result["warning"].lower()
-
     async def test_specific_response_no_warning(self, tmp_path, mock_ctx):
         """No warning for specific, past-tense response."""
         test_file = tmp_path / "test.py"
@@ -1145,40 +1117,52 @@ class TestPluginDirectoryProtection:
 class TestHookPluginDetection:
     """Tests for hook's plugin directory detection logic."""
 
-    def test_detects_development_plugin_by_plugin_json(self, tmp_path):
-        """Detects development plugin via .claude-plugin/plugin.json."""
-        from hooks.pre_tool_use import is_inline_dialogue_plugin_dir, is_within_plugin
+    def test_detects_development_plugin_by_plugin_json(self, tmp_path, monkeypatch):
+        """Detects development plugin via .claude-plugin/plugin.json when CWD matches."""
+        from hooks.pre_tool_use import is_inline_dialogue_dev_directory, is_within_plugin
 
         # Create plugin structure
         plugin_dir = tmp_path / ".claude-plugin"
         plugin_dir.mkdir()
         (plugin_dir / "plugin.json").write_text('{"name": "inline-dialogue"}')
 
-        assert is_inline_dialogue_plugin_dir(str(tmp_path)) is True
+        assert is_inline_dialogue_dev_directory(str(tmp_path)) is True
 
-        # File within should be detected
+        # File within should be detected when CWD is the plugin directory
         test_file = tmp_path / "skills" / "test.md"
         test_file.parent.mkdir(parents=True)
         test_file.write_text("test content")
+        
+        # Mock CWD to be the plugin directory
+        monkeypatch.chdir(tmp_path)
         assert is_within_plugin(str(test_file)) is True
 
     def test_rejects_non_inline_dialogue_plugin(self, tmp_path):
         """Rejects plugins with different names."""
-        from hooks.pre_tool_use import is_inline_dialogue_plugin_dir
+        from hooks.pre_tool_use import is_inline_dialogue_dev_directory
 
         plugin_dir = tmp_path / ".claude-plugin"
         plugin_dir.mkdir()
         (plugin_dir / "plugin.json").write_text('{"name": "some-other-plugin"}')
 
-        assert is_inline_dialogue_plugin_dir(str(tmp_path)) is False
+        assert is_inline_dialogue_dev_directory(str(tmp_path)) is False
 
-    def test_rejects_non_plugin_directory(self, tmp_path):
-        """Rejects directories without plugin structure."""
-        from hooks.pre_tool_use import is_inline_dialogue_plugin_dir, is_within_plugin
+    def test_rejects_file_outside_cwd(self, tmp_path, monkeypatch):
+        """Rejects files outside CWD even if they are in a plugin directory."""
+        from hooks.pre_tool_use import is_within_plugin
 
-        # No .claude-plugin directory
-        assert is_inline_dialogue_plugin_dir(str(tmp_path)) is False
-
+        # Create plugin structure in tmp_path
+        plugin_dir = tmp_path / ".claude-plugin"
+        plugin_dir.mkdir()
+        (plugin_dir / "plugin.json").write_text('{"name": "inline-dialogue"}')
+        
         test_file = tmp_path / "test.py"
         test_file.write_text("code")
+
+        # Set CWD to a different directory (not the plugin)
+        other_dir = tmp_path / "other"
+        other_dir.mkdir()
+        monkeypatch.chdir(other_dir)
+        
+        # File is in plugin dir, but CWD is not - should reject
         assert is_within_plugin(str(test_file)) is False

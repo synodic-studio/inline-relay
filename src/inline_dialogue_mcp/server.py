@@ -256,27 +256,6 @@ async def respond_to_thread(thread_id: str, response: str, path: str, ctx: Conte
             result["warning"] = f"{existing_warning}; {future_warning}" if existing_warning else future_warning
             break
 
-    # Warn about vague responses that lack specificity
-    vague_patterns = [
-        r"^done\.?$",  # Just "Done" or "Done."
-        r"^fixed\.?$",  # Just "Fixed" or "Fixed."
-        r"^fixed it\.?$",  # "Fixed it" or "Fixed it."
-        r"^updated\.?$",  # Just "Updated"
-        r"^added\.?$",  # Just "Added"
-        r"^removed\.?$",  # Just "Removed"
-        r"^completed\.?$",  # Just "Completed"
-    ]
-    response_stripped = response.strip().lower()
-    for pattern in vague_patterns:
-        if re.search(pattern, response_stripped):
-            existing_warning = result.get("warning", "")
-            vague_warning = (
-                "Response is too vague. "
-                "Be specific: reference line numbers, function names, or file locations."
-            )
-            result["warning"] = f"{existing_warning}; {vague_warning}" if existing_warning else vague_warning
-            break
-
     # Log the respond event to SQLite
     log_thread_event(
         file_path=str(file_path),
