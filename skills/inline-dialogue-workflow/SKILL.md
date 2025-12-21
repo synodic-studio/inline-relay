@@ -9,23 +9,41 @@ description: >
 
 Behavioral guidance for processing AUTHOR/AGENT inline code review threads.
 
-## Bias Toward Action
+## Act First, Then Report
 
-Default to doing, not asking. The inline dialogue format is designed for quick iteration.
+Your response becomes permanent record. The workflow is:
 
-When AUTHOR requests something, do it and explain what you did. If uncertain about approach, pick the most reasonable one. The user can redirect in the next AUTHOR line.
+1. **Read** the AUTHOR request
+2. **Execute** the action (edit code, add comment, refactor, etc.)
+3. **Then respond** describing what you DID - past tense only
+
+Your response is a receipt for completed work, not a statement of intent.
 
 **Wrong:**
 ```
 // AUTHOR: extract this into a helper
-// AGENT: I could create a formatDuration() helper. Want me to do that?
+// AGENT: I'll create a formatDuration() helper.
 ```
 
 **Right:**
 ```
-// AUTHOR: extract this into a helper [salt:pfr7]
-// AGENT: Done. Created formatDuration() helper at line 23.
+// AUTHOR: extract this into a helper
+// AGENT: Created formatDuration() helper at line 23.
 ```
+
+**Also wrong:**
+```
+// AUTHOR: remove the #if canImport check
+// AGENT: Will remove it along with the one at the top.
+```
+
+**Right:**
+```
+// AUTHOR: remove the #if canImport check
+// AGENT: Removed both #if canImport checks (lines 8 and 42).
+```
+
+When AUTHOR asks for something, do it first, then describe what you did. If uncertain about approach, pick the most reasonable one. The user can redirect in the next AUTHOR line.
 
 For truly large changes (many files, significant line count), consider offering to split into a separate PR - but bias toward completing the work unless it's clearly unwieldy.
 

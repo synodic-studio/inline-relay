@@ -227,6 +227,24 @@ async def respond_to_thread(thread_id: str, response: str, path: str, ctx: Conte
     result = {"success": True, "file": str(file_path)}
     if warn_additional_response:
         result["warning"] = "Added additional response while thread was awaiting user"
+
+    # Warn about future-tense language (suggests action wasn't completed first)
+    future_patterns = [
+        r"\bwill\s+(?:add|remove|create|update|fix|change|refactor|move)",
+        r"\bi'll\s+(?:add|remove|create|update|fix|change|refactor|move)",
+        r"\bgoing to\s+(?:add|remove|create|update|fix|change)",
+    ]
+    response_lower = response.lower()
+    for pattern in future_patterns:
+        if re.search(pattern, response_lower):
+            existing_warning = result.get("warning", "")
+            future_warning = (
+                "Response contains future-tense language. "
+                "Did you complete the action first? Responses should describe completed work."
+            )
+            result["warning"] = f"{existing_warning}; {future_warning}" if existing_warning else future_warning
+            break
+
     return result
 
 

@@ -275,6 +275,12 @@ def find_threads_in_file(file_path: Path) -> list[dict]:
                 action = detect_action_command(last_entry["text"])
                 if action:
                     thread_data["action_required"] = action
+                else:
+                    # Add guidance for regular responses (not commands)
+                    thread_data["response_note"] = (
+                        "Complete requested code changes BEFORE calling respond_to_thread. "
+                        "Your response is a receipt for completed work. Use past tense."
+                    )
 
             threads.append(thread_data)
             current_thread = None
@@ -306,6 +312,12 @@ def find_threads_in_file(file_path: Path) -> list[dict]:
             action = detect_action_command(last_entry["text"])
             if action:
                 thread_data["action_required"] = action
+            else:
+                # Add guidance for regular responses (not commands)
+                thread_data["response_note"] = (
+                    "Complete requested code changes BEFORE calling respond_to_thread. "
+                    "Your response is a receipt for completed work. Use past tense."
+                )
 
         threads.append(thread_data)
 
