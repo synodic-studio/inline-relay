@@ -31,20 +31,57 @@ def get_plugin_root() -> str | None:
         return None
 
 
+def is_inline_dialogue_dev_directory(directory: str) -> bool:
+    """Check if a directory is an inline-dialogue plugin development directory.
+    
+    Identifies by checking for .claude-plugin/plugin.json with name containing
+    "inline-dialogue".
+    """
+    if not directory or not os.path.isdir(directory):
+        return False
+    
+    try:
+        plugin_json = os.path.join(directory, ".claude-plugin", "plugin.json")
+        if os.path.exists(plugin_json):
+            with open(plugin_json, "r") as f:
+                import json
+                data = json.load(f)
+                if "inline-dialogue" in data.get("name", "").lower():
+                    return True
+        return False
+    except Exception:
+        return False
+
+
 def is_within_plugin(file_path: str) -> bool:
     """Check if file_path is within the plugin directory itself.
 
     When developing the plugin, we want to allow edits to plugin files
     (like SKILL.md with example markers) without blocking.
+    
+    Allows edits when:
+    1. File is within the installed plugin (where this hook runs from), OR
+    2. CWD is an inline-dialogue dev directory AND file is within CWD
     """
     if not file_path:
         return False
-    plugin_root = get_plugin_root()
-    if not plugin_root:
-        return False
+    
     try:
         abs_file = os.path.abspath(file_path)
-        return abs_file.startswith(plugin_root + os.sep)
+        
+        # Check if within the installed plugin (where this hook runs from)
+        plugin_root = get_plugin_root()
+        if plugin_root and abs_file.startswith(plugin_root + os.sep):
+            return True
+        
+        # Check if CWD is an inline-dialogue dev directory and file is within it
+        cwd = os.getcwd()
+        if is_inline_dialogue_dev_directory(cwd):
+            abs_cwd = os.path.abspath(cwd)
+            if abs_file.startswith(abs_cwd + os.sep):
+                return True
+        
+        return False
     except Exception:
         return False
 

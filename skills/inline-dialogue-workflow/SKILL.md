@@ -102,3 +102,27 @@ The thread stays in place. After the author dismisses it, it disappears.
 3. **Only use respond_to_thread for responses** - It appends, never replaces
 4. **Preserve full thread history** - The author uses this to follow the conversation; never condense or rewrite previous exchanges
 5. **Edit surgically** - When making code changes near a thread, work around it
+
+## Verification Before Response
+
+Before calling `respond_to_thread`:
+
+1. **Confirm the change exists** - File is saved, code is present
+2. **Be specific** - Reference line numbers, function names, file paths
+3. **Never claim future work** - "Created X" not "Will create X"
+
+If you realize you haven't actually made the change, make it first. Don't respond with what you "would" do.
+
+**Vague (bad):**
+```
+// AGENT: Done.
+// AGENT: Fixed it.
+// AGENT: Added the test.
+```
+
+**Specific (good):**
+```
+// AGENT: Removed redundant check at line 45.
+// AGENT: Added null guard in processData() before the forEach.
+// AGENT: Added TestActionCommand.test_reset_clears_state in test_server.py.
+```
