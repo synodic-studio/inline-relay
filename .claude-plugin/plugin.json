@@ -1,17 +1,9 @@
 {
   "name": "inline-dialogue",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "AUTHOR/AGENT inline code review threads - MCP tools and edit guards",
   "author": {
     "name": "Synodic Studio"
   },
-  "mcpServers": "./.mcp.json",
-  "hooks": {
-    "Stop": [
-      {
-        "type": "command",
-        "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/stop.py"
-      }
-    ]
-  }
+  "mcpServers": "./.mcp.json"
 }
