@@ -26,3 +26,12 @@ Scan for and process all AUTHOR/AGENT threads in the codebase.
 ## Arguments
 
 - `path` (optional): File or directory to scan. **IMPORTANT**: If a path is provided, pass it exactly to `get_threads(path)`. Only use "." if no path argument was given.
+
+## Critical: Act First, Verify, Then Respond
+
+For each `awaiting_agent` thread:
+1. **Make the change** - Edit the code, save the file
+2. **Verify it worked** - Confirm the change exists
+3. **Then respond** - Call `respond_to_thread` with past-tense description
+
+Never respond with what you "will" do or "would" do. Responses are receipts for completed work.

@@ -31,20 +31,68 @@ def get_plugin_root() -> str | None:
         return None
 
 
+def is_inline_dialogue_plugin_dir(directory: str) -> bool:
+    """Check if a directory is an inline-dialogue plugin (installed or development).
+    
+    Identifies plugin directories by checking for:
+    - .claude-plugin/plugin.json with name containing "inline-dialogue"
+    - Or being within the installed plugin cache path
+    """
+    if not directory or not os.path.isdir(directory):
+        return False
+    
+    try:
+        # Check for .claude-plugin/plugin.json marker
+        plugin_json = os.path.join(directory, ".claude-plugin", "plugin.json")
+        if os.path.exists(plugin_json):
+            with open(plugin_json, "r") as f:
+                import json
+                data = json.load(f)
+                if "inline-dialogue" in data.get("name", "").lower():
+                    return True
+        
+        # Check if it's in the installed plugin cache
+        if "inline-dialogue" in directory and ".claude/plugins/cache" in directory:
+            return True
+            
+        return False
+    except Exception:
+        return False
+
+
 def is_within_plugin(file_path: str) -> bool:
-    """Check if file_path is within the plugin directory itself.
+    """Check if file_path is within any inline-dialogue plugin directory.
 
     When developing the plugin, we want to allow edits to plugin files
     (like SKILL.md with example markers) without blocking.
+    
+    This checks BOTH the installed plugin directory AND any development
+    directories that have inline-dialogue plugin structure.
     """
     if not file_path:
         return False
-    plugin_root = get_plugin_root()
-    if not plugin_root:
-        return False
+    
     try:
         abs_file = os.path.abspath(file_path)
-        return abs_file.startswith(plugin_root + os.sep)
+        
+        # Check if within the installed plugin (where this hook runs from)
+        plugin_root = get_plugin_root()
+        if plugin_root and abs_file.startswith(plugin_root + os.sep):
+            return True
+        
+        # Walk up the directory tree to find a plugin root
+        current = os.path.dirname(abs_file)
+        checked = set()
+        while current and current not in checked:
+            checked.add(current)
+            if is_inline_dialogue_plugin_dir(current):
+                return True
+            parent = os.path.dirname(current)
+            if parent == current:  # Reached filesystem root
+                break
+            current = parent
+        
+        return False
     except Exception:
         return False
 

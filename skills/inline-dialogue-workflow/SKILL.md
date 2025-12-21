@@ -70,6 +70,31 @@ Thread markers do NOT block edits to surrounding code. Only edits that touch the
 
 If you think "threads are blocking my edits" - you're wrong. Make the code changes, then respond.
 
+## Editing Around Threads
+
+When code you need to change has thread markers in the middle, make **separate edits** above and below:
+
+**Scenario:** You need to refactor this function, but there's a thread in it:
+```swift
+func process() {
+    let data = fetch()
+    // AUTHOR: should this use async/await?
+    // AGENT: Good idea, but needs broader changes.
+    // AUTHOR: 
+    transform(data)
+    save(data)
+}
+```
+
+**Wrong:** Trying to edit the whole function at once (old_string includes markers → blocked)
+
+**Right:** Make two edits:
+1. Edit lines above the thread (`let data = fetch()`)
+2. Edit lines below the thread (`transform(data)` and `save(data)`)
+3. Leave the thread markers untouched
+
+The thread stays in place. After the author dismisses it, it disappears.
+
 ## Critical Rules
 
 1. **Use Edit tool for code changes** - Write could destroy thread markers
@@ -77,3 +102,27 @@ If you think "threads are blocking my edits" - you're wrong. Make the code chang
 3. **Only use respond_to_thread for responses** - It appends, never replaces
 4. **Preserve full thread history** - The author uses this to follow the conversation; never condense or rewrite previous exchanges
 5. **Edit surgically** - When making code changes near a thread, work around it
+
+## Verification Before Response
+
+Before calling `respond_to_thread`:
+
+1. **Confirm the change exists** - File is saved, code is present
+2. **Be specific** - Reference line numbers, function names, file paths
+3. **Never claim future work** - "Created X" not "Will create X"
+
+If you realize you haven't actually made the change, make it first. Don't respond with what you "would" do.
+
+**Vague (bad):**
+```
+// AGENT: Done.
+// AGENT: Fixed it.
+// AGENT: Added the test.
+```
+
+**Specific (good):**
+```
+// AGENT: Removed redundant check at line 45.
+// AGENT: Added null guard in processData() before the forEach.
+// AGENT: Added TestActionCommand.test_reset_clears_state in test_server.py.
+```

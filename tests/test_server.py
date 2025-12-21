@@ -608,6 +608,70 @@ class TestRespondToThread:
         assert "// AGENT: Follow up answer" in content
 
 
+class TestResponseWarnings:
+    """Tests for response quality warnings (future-tense, vague claims)."""
+
+    async def test_future_tense_warning(self, tmp_path, mock_ctx):
+        """Warns about future-tense language in responses."""
+        test_file = tmp_path / "test.py"
+        test_file.write_text("// AUTHOR: Fix this bug\ndef foo(): pass\n")
+
+        threads, _ = find_all_threads(test_file)
+        thread_id = threads[0]["id"]
+
+        result = await _respond_to_thread(
+            thread_id, "I will fix the bug", str(test_file), mock_ctx
+        )
+
+        assert result["success"] is True
+        assert "warning" in result
+        assert "future-tense" in result["warning"]
+
+    async def test_vague_done_warning(self, tmp_path, mock_ctx):
+        """Warns about vague 'Done' response."""
+        test_file = tmp_path / "test.py"
+        test_file.write_text("// AUTHOR: Fix this bug\ndef foo(): pass\n")
+
+        threads, _ = find_all_threads(test_file)
+        thread_id = threads[0]["id"]
+
+        result = await _respond_to_thread(thread_id, "Done.", str(test_file), mock_ctx)
+
+        assert result["success"] is True
+        assert "warning" in result
+        assert "vague" in result["warning"].lower()
+
+    async def test_vague_fixed_warning(self, tmp_path, mock_ctx):
+        """Warns about vague 'Fixed' response."""
+        test_file = tmp_path / "test.py"
+        test_file.write_text("// AUTHOR: Fix this bug\ndef foo(): pass\n")
+
+        threads, _ = find_all_threads(test_file)
+        thread_id = threads[0]["id"]
+
+        result = await _respond_to_thread(thread_id, "Fixed it", str(test_file), mock_ctx)
+
+        assert result["success"] is True
+        assert "warning" in result
+        assert "vague" in result["warning"].lower()
+
+    async def test_specific_response_no_warning(self, tmp_path, mock_ctx):
+        """No warning for specific, past-tense response."""
+        test_file = tmp_path / "test.py"
+        test_file.write_text("// AUTHOR: Fix this bug\ndef foo(): pass\n")
+
+        threads, _ = find_all_threads(test_file)
+        thread_id = threads[0]["id"]
+
+        result = await _respond_to_thread(
+            thread_id, "Fixed null check at line 42 in processData()", str(test_file), mock_ctx
+        )
+
+        assert result["success"] is True
+        assert "warning" not in result
+
+
+
 class TestFindThreadById:
     """Tests for finding threads by ID."""
 
@@ -1076,3 +1140,45 @@ class TestPluginDirectoryProtection:
 
         assert "error" in result
         assert "plugin directory" in result["error"]
+
+
+class TestHookPluginDetection:
+    """Tests for hook's plugin directory detection logic."""
+
+    def test_detects_development_plugin_by_plugin_json(self, tmp_path):
+        """Detects development plugin via .claude-plugin/plugin.json."""
+        from hooks.pre_tool_use import is_inline_dialogue_plugin_dir, is_within_plugin
+
+        # Create plugin structure
+        plugin_dir = tmp_path / ".claude-plugin"
+        plugin_dir.mkdir()
+        (plugin_dir / "plugin.json").write_text('{"name": "inline-dialogue"}')
+
+        assert is_inline_dialogue_plugin_dir(str(tmp_path)) is True
+
+        # File within should be detected
+        test_file = tmp_path / "skills" / "test.md"
+        test_file.parent.mkdir(parents=True)
+        test_file.write_text("test content")
+        assert is_within_plugin(str(test_file)) is True
+
+    def test_rejects_non_inline_dialogue_plugin(self, tmp_path):
+        """Rejects plugins with different names."""
+        from hooks.pre_tool_use import is_inline_dialogue_plugin_dir
+
+        plugin_dir = tmp_path / ".claude-plugin"
+        plugin_dir.mkdir()
+        (plugin_dir / "plugin.json").write_text('{"name": "some-other-plugin"}')
+
+        assert is_inline_dialogue_plugin_dir(str(tmp_path)) is False
+
+    def test_rejects_non_plugin_directory(self, tmp_path):
+        """Rejects directories without plugin structure."""
+        from hooks.pre_tool_use import is_inline_dialogue_plugin_dir, is_within_plugin
+
+        # No .claude-plugin directory
+        assert is_inline_dialogue_plugin_dir(str(tmp_path)) is False
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text("code")
+        assert is_within_plugin(str(test_file)) is False
