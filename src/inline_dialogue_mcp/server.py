@@ -13,6 +13,7 @@ from .core import (
     find_git_root,
     find_thread_by_id,
     find_thread_location,
+    log_thread_event,
     normalize_all_inline_comments,
     salt_duplicate_threads,
 )
@@ -255,6 +256,17 @@ async def respond_to_thread(thread_id: str, response: str, path: str, ctx: Conte
             result["warning"] = f"{existing_warning}; {future_warning}" if existing_warning else future_warning
             break
 
+    # Log the respond event to SQLite
+    log_thread_event(
+        file_path=str(file_path),
+        thread_id=thread_id,
+        event_type="respond",
+        first_author_text=first_author_text,
+        thread_content=thread["thread"],
+        agent_response=response,
+        status="awaiting_author",
+    )
+
     return result
 
 
@@ -338,6 +350,15 @@ def clear_and_commit(file: str, message: str = "") -> dict:
             "lines_removed": lines_removed,
         }
 
+    # Log the commit event to SQLite (all threads cleared from file)
+    log_thread_event(
+        file_path=str(file_path),
+        thread_id="all",
+        event_type="commit",
+        first_author_text=f"Cleared {lines_removed} lines, committed as {commit_hash}",
+        status="committed",
+    )
+
     return {
         "success": True,
         "file": str(file_path),
@@ -413,6 +434,16 @@ async def dismiss_thread(thread_id: str, path: str, ctx: Context) -> dict:
         file_path.write_text("\n".join(lines) + "\n")
     except OSError as e:
         return {"success": False, "error": str(e)}
+
+    # Log the dismiss event to SQLite
+    log_thread_event(
+        file_path=str(file_path),
+        thread_id=thread_id,
+        event_type="dismiss",
+        first_author_text=first_author_text,
+        thread_content=thread["thread"],
+        status="dismissed",
+    )
 
     return {
         "success": True,

@@ -1,11 +1,14 @@
 """Core logic for inline-dialogue thread parsing and manipulation."""
 
 import hashlib
+import json
 import os
 import random
 import re
+import sqlite3
 import string
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 AUTHOR_PATTERN = re.compile(r"^(\s*)//\s*AUTHOR:\s*(.*)$")
@@ -482,3 +485,125 @@ def find_thread_location(file_path: Path, first_author_text: str) -> int | None:
             return i + 1
 
     return None
+
+
+# Thread logging to SQLite database
+THREADS_DB_PATH = Path.home() / "Developer" / "claude-session-db" / "threads.db"
+
+
+def _create_threads_schema(conn: sqlite3.Connection) -> None:
+    """Create threads table schema if it doesn't exist."""
+    cursor = conn.cursor()
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS threads (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        repo TEXT NOT NULL,
+        branch TEXT,
+        file_path TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        first_author_text TEXT,
+        thread_json TEXT,
+        agent_response TEXT,
+        status TEXT
+    )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_threads_timestamp ON threads(timestamp)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_threads_thread_id ON threads(thread_id)"
+    )
+    conn.commit()
+
+
+def _get_git_info(file_path: str) -> tuple[str, str]:
+    """Get git repo path and branch for a file."""
+    try:
+        file_dir = Path(file_path).parent
+        if not file_dir.exists():
+            file_dir = Path.cwd()
+
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            cwd=str(file_dir),
+            timeout=5,
+        )
+        repo_path = result.stdout.strip() if result.returncode == 0 else str(file_dir)
+
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=str(file_dir),
+            timeout=5,
+        )
+        branch = result.stdout.strip() if result.returncode == 0 else ""
+
+        return repo_path, branch
+    except Exception:
+        return str(Path(file_path).parent), ""
+
+
+def log_thread_event(
+    file_path: str,
+    thread_id: str,
+    event_type: str,
+    first_author_text: str = "",
+    thread_content: list | None = None,
+    agent_response: str = "",
+    status: str = "",
+) -> bool:
+    """Log a thread event to SQLite database.
+
+    Args:
+        file_path: Path to file containing the thread
+        thread_id: The inline-dialogue thread hash ID
+        event_type: Type of event (respond, dismiss, commit)
+        first_author_text: Original AUTHOR request that started thread
+        thread_content: Full thread array (will be JSON serialized)
+        agent_response: The response being added (for respond events)
+        status: Thread status at time of event
+
+    Returns:
+        True if logged successfully, False otherwise
+    """
+    try:
+        THREADS_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(THREADS_DB_PATH))
+        _create_threads_schema(conn)
+
+        repo_path, branch = _get_git_info(file_path)
+        thread_json = json.dumps(thread_content) if thread_content else None
+
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO threads (
+                timestamp, repo, branch, file_path, thread_id, event_type,
+                first_author_text, thread_json, agent_response, status
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                datetime.now().isoformat(),
+                repo_path,
+                branch,
+                file_path,
+                thread_id,
+                event_type,
+                first_author_text,
+                thread_json,
+                agent_response,
+                status,
+            ),
+        )
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        # Silent failure - don't disrupt MCP tool operation
+        return False

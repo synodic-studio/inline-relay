@@ -70,6 +70,31 @@ Thread markers do NOT block edits to surrounding code. Only edits that touch the
 
 If you think "threads are blocking my edits" - you're wrong. Make the code changes, then respond.
 
+## Editing Around Threads
+
+When code you need to change has thread markers in the middle, make **separate edits** above and below:
+
+**Scenario:** You need to refactor this function, but there's a thread in it:
+```swift
+func process() {
+    let data = fetch()
+    // AUTHOR: should this use async/await?
+    // AGENT: Good idea, but needs broader changes.
+    // AUTHOR: 
+    transform(data)
+    save(data)
+}
+```
+
+**Wrong:** Trying to edit the whole function at once (old_string includes markers → blocked)
+
+**Right:** Make two edits:
+1. Edit lines above the thread (`let data = fetch()`)
+2. Edit lines below the thread (`transform(data)` and `save(data)`)
+3. Leave the thread markers untouched
+
+The thread stays in place. After the author dismisses it, it disappears.
+
 ## Critical Rules
 
 1. **Use Edit tool for code changes** - Write could destroy thread markers
