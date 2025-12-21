@@ -55,6 +55,21 @@ When AUTHOR writes exactly `done`, `reset`, `commit`, or `commit file`:
 - `done`/`reset` → `dismiss_thread(thread_id, path)`
 - `commit`/`commit file` → `clear_and_commit(thread_id, path, message)`
 
+## What IS and ISN'T Blocked
+
+Thread markers do NOT block edits to surrounding code. Only edits that touch the `// AUTHOR:` or `// AGENT:` lines themselves are blocked.
+
+**You CAN:**
+- Edit code above, below, or around thread markers
+- Add new code near threads
+- Refactor code in the same file as threads
+
+**You CANNOT:**
+- Edit or delete `// AUTHOR:` or `// AGENT:` lines directly (use MCP tools instead)
+- Use Write tool on files containing threads (use Edit tool)
+
+If you think "threads are blocking my edits" - you're wrong. Make the code changes, then respond.
+
 ## Critical Rules
 
 1. **Use Edit tool for code changes** - Write could destroy thread markers
