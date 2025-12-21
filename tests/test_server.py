@@ -562,8 +562,8 @@ class TestRespondToThread:
         content = test_file.read_text()
         assert content.count("// AGENT:") == 1
 
-    async def test_warns_on_different_additional_response(self, tmp_path, mock_ctx):
-        """Allows different response but warns when thread awaiting user."""
+    async def test_appends_to_existing_agent_response(self, tmp_path, mock_ctx):
+        """Appends to existing AGENT line when thread is awaiting user."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
             "// AUTHOR: Question?\n"
@@ -575,18 +575,17 @@ class TestRespondToThread:
         threads, _ = find_all_threads(test_file)
         thread_id = threads[0]["id"]
 
-        # Different response should succeed with warning
+        # Different response should append to existing AGENT line
         result = await _respond_to_thread(thread_id, "Additional clarification", str(test_file), mock_ctx)
 
         assert result["success"] is True
-        assert "warning" in result
-        assert "additional response" in result["warning"].lower()
+        assert result.get("appended") is True
+        assert "note" in result
 
-        # File should have both responses
+        # File should have one AGENT line with both responses joined
         content = test_file.read_text()
-        assert content.count("// AGENT:") == 2
-        assert "First answer" in content
-        assert "Additional clarification" in content
+        assert content.count("// AGENT:") == 1
+        assert "First answer | Additional clarification" in content
 
     async def test_response_preserves_multiline_thread(self, tmp_path, mock_ctx):
         """Response appends to existing multi-line thread."""
