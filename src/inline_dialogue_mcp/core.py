@@ -270,11 +270,24 @@ def find_threads_in_file(file_path: Path) -> list[dict]:
                 "status": status,
             }
 
+            # Add status guidance
+            if status == "awaiting_author":
+                thread_data["status_note"] = (
+                    "Waiting for human response. Do NOT take action on this thread. "
+                    "The empty // AUTHOR: line is a placeholder for the human's next input."
+                )
+
             # Check for action commands in the last author message
             if status == "awaiting_agent" and last_entry["text"]:
                 action = detect_action_command(last_entry["text"])
                 if action:
                     thread_data["action_required"] = action
+                else:
+                    # Add guidance for regular responses (not commands)
+                    thread_data["response_note"] = (
+                        "Complete requested code changes BEFORE calling respond_to_thread. "
+                        "Your response is a receipt for completed work. Use past tense."
+                    )
 
             threads.append(thread_data)
             current_thread = None
@@ -301,11 +314,24 @@ def find_threads_in_file(file_path: Path) -> list[dict]:
             "status": status,
         }
 
+        # Add status guidance
+        if status == "awaiting_author":
+            thread_data["status_note"] = (
+                "Waiting for human response. Do NOT take action on this thread. "
+                "The empty // AUTHOR: line is a placeholder for the human's next input."
+            )
+
         # Check for action commands in the last author message
         if status == "awaiting_agent" and last_entry["text"]:
             action = detect_action_command(last_entry["text"])
             if action:
                 thread_data["action_required"] = action
+            else:
+                # Add guidance for regular responses (not commands)
+                thread_data["response_note"] = (
+                    "Complete requested code changes BEFORE calling respond_to_thread. "
+                    "Your response is a receipt for completed work. Use past tense."
+                )
 
         threads.append(thread_data)
 

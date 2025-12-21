@@ -189,7 +189,8 @@ async def respond_to_thread(thread_id: str, response: str, path: str, ctx: Conte
             break
 
     # Check for duplicate or additional response when thread awaiting user
-    warn_additional_response = False
+    append_to_existing = False
+    prev_agent_line_idx = None
     if last_match and last_match[0] == "author":
         author_text = last_match[1].group(2).strip()
         if not author_text:
@@ -201,6 +202,7 @@ async def respond_to_thread(thread_id: str, response: str, path: str, ctx: Conte
                 prev_agent_match = AGENT_PATTERN.match(prev_line)
                 if prev_agent_match:
                     prev_agent_text = prev_agent_match.group(2).strip()
+                    prev_agent_line_idx = j
                     break
 
             if prev_agent_text == response:
@@ -209,15 +211,22 @@ async def respond_to_thread(thread_id: str, response: str, path: str, ctx: Conte
                     "error": "Duplicate response blocked (identical to previous AGENT response)",
                 }
             else:
-                # Different response - allow but will warn
-                warn_additional_response = True
+                # Different response - append to existing AGENT line instead of adding new
+                append_to_existing = True
 
-    new_lines = [
-        f"{indent}// AGENT: {response}",
-        f"{indent}// AUTHOR: ",
-    ]
-
-    lines = lines[: thread_end + 1] + new_lines + lines[thread_end + 1:]
+    if append_to_existing and prev_agent_line_idx is not None:
+        # Append to existing AGENT line, don't add new lines
+        prev_line = lines[prev_agent_line_idx]
+        prev_match = AGENT_PATTERN.match(prev_line)
+        prev_indent = prev_match.group(1) if prev_match else ""
+        prev_text = prev_match.group(2).strip() if prev_match else ""
+        lines[prev_agent_line_idx] = f"{prev_indent}// AGENT: {prev_text} | {response}"
+    else:
+        new_lines = [
+            f"{indent}// AGENT: {response}",
+            f"{indent}// AUTHOR: ",
+        ]
+        lines = lines[: thread_end + 1] + new_lines + lines[thread_end + 1:]
 
     try:
         file_path.write_text("\n".join(lines) + "\n")
@@ -225,8 +234,27 @@ async def respond_to_thread(thread_id: str, response: str, path: str, ctx: Conte
         return {"success": False, "error": str(e)}
 
     result = {"success": True, "file": str(file_path)}
-    if warn_additional_response:
-        result["warning"] = "Added additional response while thread was awaiting user"
+    if append_to_existing:
+        result["appended"] = True
+        result["note"] = "Appended to existing AGENT response (thread was awaiting user)"
+
+    # Warn about future-tense language (suggests action wasn't completed first)
+    future_patterns = [
+        r"\bwill\s+(?:add|remove|create|update|fix|change|refactor|move)",
+        r"\bi'll\s+(?:add|remove|create|update|fix|change|refactor|move)",
+        r"\bgoing to\s+(?:add|remove|create|update|fix|change)",
+    ]
+    response_lower = response.lower()
+    for pattern in future_patterns:
+        if re.search(pattern, response_lower):
+            existing_warning = result.get("warning", "")
+            future_warning = (
+                "Response contains future-tense language. "
+                "Did you complete the action first? Responses should describe completed work."
+            )
+            result["warning"] = f"{existing_warning}; {future_warning}" if existing_warning else future_warning
+            break
+
     return result
 
 
@@ -337,6 +365,23 @@ async def dismiss_thread(thread_id: str, path: str, ctx: Context) -> dict:
     thread = find_thread_by_id(search_path, thread_id)
     if thread is None:
         return {"success": False, "error": f"Thread not found: {thread_id}"}
+
+    # Block dismiss unless thread has action_required with dismiss action
+    action = thread.get("action_required", {})
+    if action.get("action") != "dismiss_thread":
+        status = thread.get("status", "unknown")
+        if status == "awaiting_author":
+            return {
+                "success": False,
+                "error": "Cannot dismiss: thread is awaiting human response. "
+                         "The empty // AUTHOR: line is a placeholder for the human's next input.",
+            }
+        else:
+            return {
+                "success": False,
+                "error": "Cannot dismiss: thread does not have a dismiss command. "
+                         "Only dismiss when AUTHOR writes 'done' or 'reset'.",
+            }
 
     file_path = Path(thread["file"])
     first_author_text = thread["thread"][0]["text"]

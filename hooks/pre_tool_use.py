@@ -22,6 +22,33 @@ def is_bypass_enabled() -> bool:
     return os.environ.get("INLINE_DIALOGUE_ALLOW_DESTRUCTIVE", "").strip() == "1"
 
 
+def get_plugin_root() -> str | None:
+    """Get the root directory of this plugin (parent of hooks/)."""
+    try:
+        hook_dir = os.path.dirname(os.path.abspath(__file__))
+        return os.path.dirname(hook_dir)
+    except Exception:
+        return None
+
+
+def is_within_plugin(file_path: str) -> bool:
+    """Check if file_path is within the plugin directory itself.
+
+    When developing the plugin, we want to allow edits to plugin files
+    (like SKILL.md with example markers) without blocking.
+    """
+    if not file_path:
+        return False
+    plugin_root = get_plugin_root()
+    if not plugin_root:
+        return False
+    try:
+        abs_file = os.path.abspath(file_path)
+        return abs_file.startswith(plugin_root + os.sep)
+    except Exception:
+        return False
+
+
 def emit_warning(message: str) -> None:
     """Emit a warning message to stderr."""
     print(message, file=sys.stderr)
@@ -62,6 +89,11 @@ def validate_thread_edit(tool_input: dict) -> dict | None:
     Returns:
         Block decision dict if touches threads, None if allowed
     """
+    # Allow edits within the plugin itself (for development)
+    file_path = tool_input.get("file_path", "")
+    if is_within_plugin(file_path):
+        return None
+
     if edit_touches_thread_markers(tool_input):
         emit_warning("=" * 60)
         emit_warning("🚫 BLOCKED: Edit touches thread markers!")
@@ -126,6 +158,10 @@ def validate_write(tool_input: dict) -> dict | None:
         Block decision dict if file has threads, None if allowed
     """
     file_path = tool_input.get("file_path", "")
+
+    # Allow writes within the plugin itself (for development)
+    if is_within_plugin(file_path):
+        return None
 
     if file_has_thread_markers(file_path):
         emit_warning("=" * 60)
