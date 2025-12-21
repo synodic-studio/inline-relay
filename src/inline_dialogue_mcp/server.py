@@ -356,6 +356,23 @@ async def dismiss_thread(thread_id: str, path: str, ctx: Context) -> dict:
     if thread is None:
         return {"success": False, "error": f"Thread not found: {thread_id}"}
 
+    # Block dismiss unless thread has action_required with dismiss action
+    action = thread.get("action_required", {})
+    if action.get("action") != "dismiss_thread":
+        status = thread.get("status", "unknown")
+        if status == "awaiting_author":
+            return {
+                "success": False,
+                "error": "Cannot dismiss: thread is awaiting human response. "
+                         "The empty // AUTHOR: line is a placeholder for the human's next input.",
+            }
+        else:
+            return {
+                "success": False,
+                "error": "Cannot dismiss: thread does not have a dismiss command. "
+                         "Only dismiss when AUTHOR writes 'done' or 'reset'.",
+            }
+
     file_path = Path(thread["file"])
     first_author_text = thread["thread"][0]["text"]
 

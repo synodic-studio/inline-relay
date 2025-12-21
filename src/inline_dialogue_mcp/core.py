@@ -270,6 +270,13 @@ def find_threads_in_file(file_path: Path) -> list[dict]:
                 "status": status,
             }
 
+            # Add status guidance
+            if status == "awaiting_author":
+                thread_data["status_note"] = (
+                    "Waiting for human response. Do NOT take action on this thread. "
+                    "The empty // AUTHOR: line is a placeholder for the human's next input."
+                )
+
             # Check for action commands in the last author message
             if status == "awaiting_agent" and last_entry["text"]:
                 action = detect_action_command(last_entry["text"])
@@ -306,6 +313,13 @@ def find_threads_in_file(file_path: Path) -> list[dict]:
             "thread": display_thread,
             "status": status,
         }
+
+        # Add status guidance
+        if status == "awaiting_author":
+            thread_data["status_note"] = (
+                "Waiting for human response. Do NOT take action on this thread. "
+                "The empty // AUTHOR: line is a placeholder for the human's next input."
+            )
 
         # Check for action commands in the last author message
         if status == "awaiting_agent" and last_entry["text"]:
