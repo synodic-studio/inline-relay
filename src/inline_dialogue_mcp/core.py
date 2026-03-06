@@ -11,18 +11,38 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-AUTHOR_PATTERN = re.compile(r"^(\s*)//\s*AUTHOR:\s*(.*)$")
-AGENT_PATTERN = re.compile(r"^(\s*)//\s*AGENT:\s*(.*)$")
-SALT_PATTERN = re.compile(r"\[salt:[a-z0-9]+\]$")
-# Matches inline AUTHOR comments: code // AUTHOR: text (where code has non-whitespace)
-INLINE_AUTHOR_PATTERN = re.compile(r"^(\s*)(\S.*)//\s*AUTHOR:\s*(.*)$")
+# Comment prefix alternation for pattern matching (matches //, #, or --)
+_COMMENT_PREFIX = r"(?://|#|--)"
 
-# File extensions where // is the comment syntax (safe to normalize inline comments)
+AUTHOR_PATTERN = re.compile(rf"^(\s*){_COMMENT_PREFIX}\s*AUTHOR:\s*(.*)$")
+AGENT_PATTERN = re.compile(rf"^(\s*){_COMMENT_PREFIX}\s*AGENT:\s*(.*)$")
+SALT_PATTERN = re.compile(r"\[salt:[a-z0-9]+\]$")
+# Matches inline AUTHOR comments: code <prefix> AUTHOR: text (where code has non-whitespace)
+INLINE_AUTHOR_PATTERN = re.compile(rf"^(\s*)(\S.*){_COMMENT_PREFIX}\s*AUTHOR:\s*(.*)$")
+
+# File extensions grouped by comment syntax
 SLASH_COMMENT_EXTENSIONS = frozenset({
     ".swift", ".js", ".jsx", ".ts", ".tsx", ".java", ".c", ".cpp", ".h", ".hpp",
     ".cs", ".go", ".rs", ".kt", ".kts", ".scala", ".m", ".mm", ".dart", ".groovy",
     ".gradle", ".json", ".jsonc",
 })
+
+HASH_COMMENT_EXTENSIONS = frozenset({
+    ".py", ".rb", ".sh", ".bash", ".zsh", ".yml", ".yaml", ".toml", ".pl", ".pm",
+    ".r", ".jl", ".tcl", ".conf", ".cfg", ".ini", ".cmake", ".tf", ".hcl",
+    ".dockerfile", ".gitignore", ".env",
+})
+
+DASH_COMMENT_EXTENSIONS = frozenset({
+    ".sql", ".lua", ".hs", ".lhs", ".elm", ".ada", ".adb", ".ads", ".vhdl", ".vhd",
+})
+
+# Mapping from extension set to prefix string
+_EXTENSION_TO_PREFIX = {
+    **{ext: "//" for ext in SLASH_COMMENT_EXTENSIONS},
+    **{ext: "#" for ext in HASH_COMMENT_EXTENSIONS},
+    **{ext: "--" for ext in DASH_COMMENT_EXTENSIONS},
+}
 
 # Exact command patterns that require immediate action (no response)
 ACTION_COMMANDS = {
@@ -74,6 +94,34 @@ def generate_salt(length: int = 4) -> str:
     return "".join(random.choice(chars) for _ in range(length))
 
 
+def get_comment_prefix(file_path: Path) -> str | None:
+    """Get the comment prefix for a file based on its extension.
+
+    Returns:
+        '//', '#', or '--' for known extensions, None for unknown.
+    """
+    return _EXTENSION_TO_PREFIX.get(file_path.suffix.lower())
+
+
+def extract_prefix_from_line(line: str) -> str:
+    """Extract the comment prefix from a thread marker line.
+
+    Looks at the first non-whitespace characters to determine
+    which comment syntax is used.
+
+    Returns:
+        '//', '#', or '--'. Falls back to '//' if unrecognized.
+    """
+    stripped = line.lstrip()
+    if stripped.startswith("//"):
+        return "//"
+    if stripped.startswith("#"):
+        return "#"
+    if stripped.startswith("--"):
+        return "--"
+    return "//"
+
+
 def uses_slash_comments(file_path: Path) -> bool:
     """Check if file uses // for comments based on extension."""
     return file_path.suffix.lower() in SLASH_COMMENT_EXTENSIONS
@@ -82,12 +130,13 @@ def uses_slash_comments(file_path: Path) -> bool:
 def normalize_inline_comments(file_path: Path) -> bool:
     """Move inline AUTHOR comments to their own line above the code.
 
-    Transforms: `code // AUTHOR: text`
+    Transforms: `code <prefix> AUTHOR: text`
     Into:
-        `// AUTHOR: text`
+        `<prefix> AUTHOR: text`
         `code`
 
-    Only processes files where // is the comment syntax.
+    Only processes files with a known comment syntax, and only matches the
+    native comment prefix for that file type (e.g., # for .py, -- for .sql).
 
     Args:
         file_path: Path to the file to normalize.
@@ -95,8 +144,13 @@ def normalize_inline_comments(file_path: Path) -> bool:
     Returns:
         True if the file was modified, False otherwise.
     """
-    if not uses_slash_comments(file_path):
+    prefix = get_comment_prefix(file_path)
+    if prefix is None:
         return False
+
+    # Build file-specific inline pattern matching only the native prefix
+    escaped_prefix = re.escape(prefix)
+    inline_pattern = re.compile(rf"^(\s*)(\S.*){escaped_prefix}\s*AUTHOR:\s*(.*)$")
 
     try:
         content = file_path.read_text()
@@ -108,13 +162,13 @@ def normalize_inline_comments(file_path: Path) -> bool:
     modified = False
 
     for line in lines:
-        match = INLINE_AUTHOR_PATTERN.match(line)
+        match = inline_pattern.match(line)
         if match:
             indent = match.group(1)
             code = match.group(2).rstrip()
             author_text = match.group(3)
             # Insert AUTHOR comment on its own line (no indent), then the code
-            new_lines.append(f"// AUTHOR: {author_text}")
+            new_lines.append(f"{prefix} AUTHOR: {author_text}")
             new_lines.append(f"{indent}{code}")
             modified = True
         else:
@@ -132,7 +186,7 @@ def normalize_inline_comments(file_path: Path) -> bool:
 def normalize_all_inline_comments(search_path: Path) -> list[str]:
     """Normalize inline AUTHOR comments in all files under search_path.
 
-    Only processes files where // is the comment syntax (skips .py, .rb, etc.).
+    Processes files with any known comment syntax (//, #, --).
 
     Args:
         search_path: File or directory to process.
@@ -447,10 +501,11 @@ def salt_duplicate_threads(warnings: list[dict]) -> list[dict]:
         if SALT_PATTERN.search(text):
             continue
 
-        # Add salt to the line
+        # Add salt to the line, preserving the original comment prefix
         salt = generate_salt()
         indent = match.group(1)
-        new_line = f"{indent}// AUTHOR: {text} [salt:{salt}]"
+        prefix = extract_prefix_from_line(line)
+        new_line = f"{indent}{prefix} AUTHOR: {text} [salt:{salt}]"
         lines[line_num - 1] = new_line
 
         try:

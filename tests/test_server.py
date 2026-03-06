@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from inline_dialogue_mcp.core import (
+    DASH_COMMENT_EXTENSIONS,
+    HASH_COMMENT_EXTENSIONS,
     INLINE_AUTHOR_PATTERN,
     SALT_PATTERN,
     SLASH_COMMENT_EXTENSIONS,
@@ -17,6 +19,7 @@ from inline_dialogue_mcp.core import (
     find_thread_location,
     find_threads_in_file,
     generate_salt,
+    get_comment_prefix,
     normalize_all_inline_comments,
     normalize_inline_comments,
     salt_duplicate_threads,
@@ -1166,3 +1169,325 @@ class TestHookPluginDetection:
         
         # File is in plugin dir, but CWD is not - should reject
         assert is_within_plugin(str(test_file)) is False
+
+
+class TestGetCommentPrefix:
+    """Tests for get_comment_prefix extension-to-prefix mapping."""
+
+    def test_slash_extensions(self):
+        """Slash-comment extensions return //."""
+        for ext in [".swift", ".js", ".ts", ".java", ".go", ".rs", ".c"]:
+            assert get_comment_prefix(Path(f"test{ext}")) == "//"
+
+    def test_hash_extensions(self):
+        """Hash-comment extensions return #."""
+        for ext in [".py", ".rb", ".sh", ".yml", ".yaml", ".toml"]:
+            assert get_comment_prefix(Path(f"test{ext}")) == "#"
+
+    def test_dash_extensions(self):
+        """Dash-comment extensions return --."""
+        for ext in [".sql", ".lua", ".hs", ".elm"]:
+            assert get_comment_prefix(Path(f"test{ext}")) == "--"
+
+    def test_unknown_extension(self):
+        """Unknown extensions return None."""
+        assert get_comment_prefix(Path("test.xyz")) is None
+
+    def test_case_insensitive(self):
+        """Extension lookup is case insensitive."""
+        assert get_comment_prefix(Path("test.PY")) == "#"
+        assert get_comment_prefix(Path("test.SQL")) == "--"
+
+
+
+# Helpers to construct marker strings without literal markers in source
+# (Literal markers in .py source get corrupted by inline-dialogue processing)
+_HASH_AUTHOR = "#" + " AUTHOR:"
+_HASH_AGENT = "#" + " AGENT:"
+
+
+class TestHashCommentThreads:
+    """Tests for hash comment syntax (Python, Ruby, Shell, etc.)."""
+
+    def test_find_thread_in_python_file(self, tmp_path):
+        """Detect hash AUTHOR/AGENT threads in Python files."""
+        test_file = tmp_path / "test.py"
+        test_file.write_text(
+            f"{_HASH_AUTHOR} Is this function correct?\n"
+            f"{_HASH_AGENT} Yes, looks good.\n"
+            f"{_HASH_AUTHOR} \n"
+            "def foo():\n"
+            "    pass\n"
+        )
+        threads = find_threads_in_file(test_file)
+        assert len(threads) == 1
+        assert threads[0]["thread"][0]["role"] == "author"
+        assert threads[0]["thread"][0]["text"] == "Is this function correct?"
+        assert threads[0]["thread"][1]["role"] == "agent"
+        assert threads[0]["thread"][1]["text"] == "Yes, looks good."
+
+    def test_find_thread_in_shell_file(self, tmp_path):
+        """Detect hash AUTHOR thread in shell scripts."""
+        test_file = tmp_path / "test.sh"
+        test_file.write_text(
+            "#!/bin/bash\n"
+            f"{_HASH_AUTHOR} Should this use set -e?\n"
+            "echo hello\n"
+        )
+        threads = find_threads_in_file(test_file)
+        assert len(threads) == 1
+        assert threads[0]["thread"][0]["text"] == "Should this use set -e?"
+
+    def test_normalize_inline_python(self, tmp_path):
+        """Inline hash AUTHOR is normalized in Python files."""
+        test_file = tmp_path / "test.py"
+        test_file.write_text(f"x = 5  {_HASH_AUTHOR} Is this right?\n")
+
+        modified = normalize_inline_comments(test_file)
+
+        assert modified is True
+        lines = test_file.read_text().splitlines()
+        assert lines[0] == f"{_HASH_AUTHOR} Is this right?"
+        assert lines[1] == "x = 5"
+
+    def test_normalize_inline_yaml(self, tmp_path):
+        """Inline hash AUTHOR is normalized in YAML files."""
+        test_file = tmp_path / "test.yml"
+        test_file.write_text(f"key: value  {_HASH_AUTHOR} Correct key name?\n")
+
+        modified = normalize_inline_comments(test_file)
+
+        assert modified is True
+        lines = test_file.read_text().splitlines()
+        assert lines[0] == f"{_HASH_AUTHOR} Correct key name?"
+        assert lines[1] == "key: value"
+
+    async def test_respond_uses_hash_prefix(self, tmp_path, mock_ctx):
+        """respond_to_thread writes hash prefix in Python files."""
+        test_file = tmp_path / "test.py"
+        test_file.write_text(
+            f"{_HASH_AUTHOR} Fix this?\n"
+            "def broken():\n"
+            "    pass\n"
+        )
+
+        result = await _get_threads(str(test_file), mock_ctx)
+        thread_id = result["threads"][0]["id"]
+
+        result = await _respond_to_thread(thread_id, "Fixed it.", str(test_file), mock_ctx)
+        assert result["success"] is True
+
+        content = test_file.read_text()
+        assert f"{_HASH_AGENT} Fixed it." in content
+        assert f"{_HASH_AUTHOR} " in content
+        # Should NOT contain // prefix
+        assert "// AGENT:" not in content
+
+    async def test_get_threads_finds_hash_threads(self, tmp_path, mock_ctx):
+        """get_threads finds hash threads in Python files."""
+        test_file = tmp_path / "test.py"
+        test_file.write_text(
+            f"{_HASH_AUTHOR} Review this\n"
+            "x = 1\n"
+        )
+
+        result = await _get_threads(str(test_file), mock_ctx)
+        assert result["summary"]["total"] == 1
+        assert result["summary"]["awaiting_agent"] == 1
+
+    async def test_dismiss_hash_thread(self, tmp_path, mock_ctx):
+        """dismiss_thread removes hash threads."""
+        test_file = tmp_path / "test.py"
+        test_file.write_text(
+            f"{_HASH_AUTHOR} done\n"
+            "x = 1\n"
+        )
+
+        result = await _get_threads(str(test_file), mock_ctx)
+        thread_id = result["threads"][0]["id"]
+
+        result = await _dismiss_thread(thread_id, str(test_file), mock_ctx)
+        assert result["success"] is True
+        assert f"{_HASH_AUTHOR} " not in test_file.read_text()
+
+
+class TestDashCommentThreads:
+    """Tests for -- comment syntax (SQL, Lua, Haskell, etc.)."""
+
+    def test_find_thread_in_sql_file(self, tmp_path):
+        """Detect -- AUTHOR/AGENT threads in SQL files."""
+        test_file = tmp_path / "query.sql"
+        test_file.write_text(
+            "-- AUTHOR: Should we add an index here?\n"
+            "-- AGENT: Yes, add index on user_id.\n"
+            "-- AUTHOR: \n"
+            "SELECT * FROM users;\n"
+        )
+        threads = find_threads_in_file(test_file)
+        assert len(threads) == 1
+        assert threads[0]["thread"][0]["text"] == "Should we add an index here?"
+        assert threads[0]["thread"][1]["text"] == "Yes, add index on user_id."
+
+    def test_find_thread_in_lua_file(self, tmp_path):
+        """Detect -- AUTHOR thread in Lua files."""
+        test_file = tmp_path / "test.lua"
+        test_file.write_text(
+            "-- AUTHOR: Refactor this?\n"
+            "function hello()\n"
+            "  print('hello')\n"
+            "end\n"
+        )
+        threads = find_threads_in_file(test_file)
+        assert len(threads) == 1
+        assert threads[0]["thread"][0]["text"] == "Refactor this?"
+
+    def test_normalize_inline_sql(self, tmp_path):
+        """Inline -- AUTHOR is normalized in SQL files."""
+        test_file = tmp_path / "query.sql"
+        test_file.write_text("SELECT * FROM users  -- AUTHOR: Too broad?\n")
+
+        modified = normalize_inline_comments(test_file)
+
+        assert modified is True
+        lines = test_file.read_text().splitlines()
+        assert lines[0] == "-- AUTHOR: Too broad?"
+        assert lines[1] == "SELECT * FROM users"
+
+    async def test_respond_uses_dash_prefix(self, tmp_path, mock_ctx):
+        """respond_to_thread writes -- prefix in SQL files."""
+        test_file = tmp_path / "query.sql"
+        test_file.write_text(
+            "-- AUTHOR: Optimize this query?\n"
+            "SELECT * FROM orders;\n"
+        )
+
+        result = await _get_threads(str(test_file), mock_ctx)
+        thread_id = result["threads"][0]["id"]
+
+        result = await _respond_to_thread(thread_id, "Added index.", str(test_file), mock_ctx)
+        assert result["success"] is True
+
+        content = test_file.read_text()
+        assert "-- AGENT: Added index." in content
+        assert "-- AUTHOR: " in content
+        assert "// AGENT:" not in content
+
+    async def test_get_threads_finds_dash_threads(self, tmp_path, mock_ctx):
+        """get_threads finds -- threads in SQL files."""
+        test_file = tmp_path / "query.sql"
+        test_file.write_text(
+            "-- AUTHOR: Review this query\n"
+            "SELECT 1;\n"
+        )
+
+        result = await _get_threads(str(test_file), mock_ctx)
+        assert result["summary"]["total"] == 1
+        assert result["summary"]["awaiting_agent"] == 1
+
+
+class TestMixedSyntaxDirectory:
+    """Tests for directories with mixed comment syntax files."""
+
+    async def test_get_threads_mixed_directory(self, tmp_path, mock_ctx):
+        """get_threads finds threads across different comment syntaxes."""
+        swift_file = tmp_path / "app.swift"
+        swift_file.write_text("// AUTHOR: Swift question\nlet x = 1\n")
+
+        py_file = tmp_path / "script.py"
+        py_file.write_text(f"{_HASH_AUTHOR} Python question\nx = 1\n")
+
+        sql_file = tmp_path / "query.sql"
+        sql_file.write_text("-- AUTHOR: SQL question\nSELECT 1;\n")
+
+        result = await _get_threads(str(tmp_path), mock_ctx)
+        assert result["summary"]["total"] == 3
+        assert result["summary"]["awaiting_agent"] == 3
+
+    async def test_normalize_mixed_directory(self, tmp_path, mock_ctx):
+        """normalize handles mixed syntax inline comments."""
+        swift_file = tmp_path / "app.swift"
+        swift_file.write_text("let x = 5 // AUTHOR: swift q\n")
+
+        py_file = tmp_path / "script.py"
+        py_file.write_text(f"x = 5  {_HASH_AUTHOR} python q\n")
+
+        sql_file = tmp_path / "query.sql"
+        sql_file.write_text("SELECT 1  -- AUTHOR: sql q\n")
+
+        modified = normalize_all_inline_comments(tmp_path)
+        assert len(modified) == 3
+
+        # Each file normalized with correct prefix
+        assert swift_file.read_text().startswith("// AUTHOR:")
+        assert py_file.read_text().startswith(f"{_HASH_AUTHOR}")
+        assert sql_file.read_text().startswith("-- AUTHOR:")
+
+
+class TestHookMultiSyntax:
+    """Tests for hook detection of all marker syntaxes."""
+
+    def test_edit_detects_hash_markers(self):
+        """Edit guard detects hash AUTHOR markers."""
+        from hooks.pre_tool_use import edit_touches_thread_markers
+
+        assert edit_touches_thread_markers({"old_string": f"{_HASH_AUTHOR} text"}) is True
+        assert edit_touches_thread_markers({"new_string": f"{_HASH_AGENT} text"}) is True
+
+    def test_edit_detects_dash_markers(self):
+        """Edit guard detects -- AUTHOR: markers."""
+        from hooks.pre_tool_use import edit_touches_thread_markers
+
+        assert edit_touches_thread_markers({"old_string": "-- AUTHOR: text"}) is True
+        assert edit_touches_thread_markers({"new_string": "-- AGENT: text"}) is True
+
+    def test_file_has_hash_markers(self, tmp_path):
+        """file_has_thread_markers detects hash markers."""
+        from hooks.pre_tool_use import file_has_thread_markers
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text(f"{_HASH_AUTHOR} question\nx = 1\n")
+        assert file_has_thread_markers(str(test_file)) is True
+
+    def test_file_has_dash_markers(self, tmp_path):
+        """file_has_thread_markers detects -- markers."""
+        from hooks.pre_tool_use import file_has_thread_markers
+
+        test_file = tmp_path / "query.sql"
+        test_file.write_text("-- AUTHOR: question\nSELECT 1;\n")
+        assert file_has_thread_markers(str(test_file)) is True
+
+    def test_no_false_positive_on_clean_file(self, tmp_path):
+        """Clean files don't trigger markers."""
+        from hooks.pre_tool_use import file_has_thread_markers
+
+        test_file = tmp_path / "clean.py"
+        test_file.write_text("# This is a normal comment\nx = 1\n")
+        assert file_has_thread_markers(str(test_file)) is False
+
+
+class TestInlineAuthorPatternMultiSyntax:
+    """Tests for inline AUTHOR pattern with multiple comment syntaxes."""
+
+    def test_matches_hash_inline(self):
+        """Pattern matches code with hash AUTHOR."""
+        match = INLINE_AUTHOR_PATTERN.match(f"x = 5  {_HASH_AUTHOR} Is this right?")
+        assert match is not None
+        assert match.group(2).rstrip() == "x = 5"
+        assert match.group(3) == "Is this right?"
+
+    def test_matches_dash_inline(self):
+        """Pattern matches code -- AUTHOR: text."""
+        match = INLINE_AUTHOR_PATTERN.match("SELECT * FROM users  -- AUTHOR: Too broad?")
+        assert match is not None
+        assert match.group(2).rstrip() == "SELECT * FROM users"
+        assert match.group(3) == "Too broad?"
+
+    def test_no_match_standalone_hash(self):
+        """Pattern does NOT match standalone hash AUTHOR."""
+        match = INLINE_AUTHOR_PATTERN.match(f"{_HASH_AUTHOR} standalone")
+        assert match is None
+
+    def test_no_match_standalone_dash(self):
+        """Pattern does NOT match standalone -- AUTHOR."""
+        match = INLINE_AUTHOR_PATTERN.match("-- AUTHOR: standalone")
+        assert match is None
