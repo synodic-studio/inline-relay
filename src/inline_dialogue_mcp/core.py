@@ -29,6 +29,8 @@ ACTION_COMMANDS = {
     "done": ("dismiss_thread", "Thread complete. Call dismiss_thread(thread_id, path) immediately."),
     "commit": ("clear_and_commit", "Commit requested. Call clear_and_commit(file) immediately."),
     "commit file": ("clear_and_commit", "Commit requested. Call clear_and_commit(file) immediately."),
+    "commit this": ("commit_hunk_approved", "Commit this thread. Call commit_hunk_approved(thread_id, path) immediately."),
+    "commit this thread": ("commit_hunk_approved", "Commit this thread. Call commit_hunk_approved(thread_id, path) immediately."),
     "reset": ("dismiss_thread", "Reset requested. Call dismiss_thread(thread_id, path) immediately."),
 }
 

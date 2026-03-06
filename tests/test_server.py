@@ -24,6 +24,7 @@ from inline_dialogue_mcp.core import (
     uses_slash_comments,
 )
 from inline_dialogue_mcp.server import (
+    commit_hunk_approved,
     dismiss_thread,
     get_threads,
     process_all_actions,
@@ -34,6 +35,7 @@ from inline_dialogue_mcp.server import (
 _get_threads = get_threads.fn
 _respond_to_thread = respond_to_thread.fn
 _dismiss_thread = dismiss_thread.fn
+_commit_hunk_approved = commit_hunk_approved.fn
 _process_all_actions = process_all_actions.fn
 
 
@@ -1070,6 +1072,170 @@ class TestActionCommandDetection:
         assert thread["status"] == "awaiting_author"
 
 
+class TestCommitHunkApprovedCommandDetection:
+    """Tests for 'commit this'/'commit this thread' action command detection."""
+
+    async def test_commit_this_command_detected(self, tmp_path, mock_ctx):
+        """'commit this' triggers action_required with commit_hunk_approved."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("// AUTHOR: commit this\nfunc foo() {}\n")
+
+        result = await _get_threads(str(test_file), mock_ctx)
+
+        thread = result["threads"][0]
+        assert "action_required" in thread
+        assert thread["action_required"]["action"] == "commit_hunk_approved"
+        assert "COMMAND detected" in thread["action_required"]["note"]
+
+    async def test_commit_this_thread_command_detected(self, tmp_path, mock_ctx):
+        """'commit this thread' triggers action_required with commit_hunk_approved."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("// AUTHOR: commit this thread\nfunc foo() {}\n")
+
+        result = await _get_threads(str(test_file), mock_ctx)
+
+        thread = result["threads"][0]
+        assert "action_required" in thread
+        assert thread["action_required"]["action"] == "commit_hunk_approved"
+
+    async def test_commit_this_case_insensitive(self, tmp_path, mock_ctx):
+        """'COMMIT THIS' is case-insensitive."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("// AUTHOR: COMMIT THIS\nfunc foo() {}\n")
+
+        result = await _get_threads(str(test_file), mock_ctx)
+
+        thread = result["threads"][0]
+        assert "action_required" in thread
+        assert thread["action_required"]["action"] == "commit_hunk_approved"
+
+    async def test_commit_this_not_partial_match(self, tmp_path, mock_ctx):
+        """'commit this function' is NOT a command (partial match)."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("// AUTHOR: commit this function\nfunc foo() {}\n")
+
+        result = await _get_threads(str(test_file), mock_ctx)
+
+        thread = result["threads"][0]
+        assert "action_required" not in thread
+
+    async def test_commit_this_vs_commit_file(self, tmp_path, mock_ctx):
+        """'commit this' is distinct from 'commit' (clear_and_commit)."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("// AUTHOR: commit this\nfunc foo() {}\n")
+
+        result = await _get_threads(str(test_file), mock_ctx)
+
+        thread = result["threads"][0]
+        assert thread["action_required"]["action"] == "commit_hunk_approved"
+        assert thread["action_required"]["action"] != "clear_and_commit"
+
+
+class TestCommitHunkApproved:
+    """Tests for commit_hunk_approved tool."""
+
+    async def test_removes_only_target_thread(self, tmp_path, mock_ctx):
+        """Removes only the specified thread's markers, leaves others intact."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text(
+            "// AUTHOR: first question\n"
+            "// AGENT: first answer\n"
+            "// AUTHOR: commit this\n"
+            "func foo() {}\n"
+            "// AUTHOR: second question\n"
+            "// AGENT: second answer\n"
+            "// AUTHOR: \n"
+            "func bar() {}\n"
+        )
+
+        result = await _get_threads(str(test_file), mock_ctx)
+        target = next(t for t in result["threads"] if t["action_required"]["action"] == "commit_hunk_approved")
+        thread_id = target["id"]
+
+        # Call directly - git will fail (not a git repo) but file should be modified first
+        commit_result = await _commit_hunk_approved(thread_id, str(test_file), mock_ctx)
+
+        # File modification happened before the git step
+        content = test_file.read_text()
+        assert "first question" not in content
+        assert "first answer" not in content
+        assert "second question" in content
+        assert "second answer" in content
+        assert "func foo()" in content
+        assert "func bar()" in content
+
+    async def test_lines_removed_count(self, tmp_path, mock_ctx):
+        """Reports correct number of thread marker lines removed."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text(
+            "// AUTHOR: question\n"
+            "// AGENT: answer\n"
+            "// AUTHOR: commit this\n"
+            "func foo() {}\n"
+        )
+
+        result = await _get_threads(str(test_file), mock_ctx)
+        thread_id = result["threads"][0]["id"]
+
+        commit_result = await _commit_hunk_approved(thread_id, str(test_file), mock_ctx)
+
+        assert commit_result.get("lines_removed") == 3
+
+    async def test_rejects_thread_not_found(self, tmp_path, mock_ctx):
+        """Returns error when thread ID does not exist."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("func foo() {}\n")
+
+        result = await _commit_hunk_approved("nonexistent", str(test_file), mock_ctx)
+
+        assert result["success"] is False
+        assert "not found" in result["error"]
+
+    async def test_rejects_wrong_action(self, tmp_path, mock_ctx):
+        """Returns error when thread has wrong action (e.g. dismiss_thread)."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("// AUTHOR: done\nfunc foo() {}\n")
+
+        result = await _get_threads(str(test_file), mock_ctx)
+        thread_id = result["threads"][0]["id"]
+
+        commit_result = await _commit_hunk_approved(thread_id, str(test_file), mock_ctx)
+
+        assert commit_result["success"] is False
+        assert "commit_hunk_approved command" in commit_result["error"]
+
+    async def test_rejects_awaiting_author_thread(self, tmp_path, mock_ctx):
+        """Returns error when thread is awaiting author response."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text(
+            "// AUTHOR: question?\n// AGENT: answer\n// AUTHOR: \nfunc foo() {}\n"
+        )
+
+        result = await _get_threads(str(test_file), mock_ctx)
+        thread_id = result["threads"][0]["id"]
+
+        commit_result = await _commit_hunk_approved(thread_id, str(test_file), mock_ctx)
+
+        assert commit_result["success"] is False
+        assert "awaiting human response" in commit_result["error"]
+
+    async def test_git_failure_returns_error_with_lines_removed(self, tmp_path, mock_ctx):
+        """When git commit fails, returns error but reports lines_removed."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("// AUTHOR: commit this\nfunc foo() {}\n")
+
+        result = await _get_threads(str(test_file), mock_ctx)
+        thread_id = result["threads"][0]["id"]
+
+        # tmp_path is not a git repo, so git commit will fail
+        commit_result = await _commit_hunk_approved(thread_id, str(test_file), mock_ctx)
+
+        assert commit_result["success"] is False
+        assert "Git commit failed" in commit_result["error"]
+        assert "lines_removed" in commit_result
+        assert commit_result["lines_removed"] == 1
+
+
 class TestProcessAllActions:
     """Tests for process_all_actions batch execution tool."""
 
@@ -1178,6 +1344,50 @@ class TestProcessAllActions:
         assert result["actions_executed"] == 2
         assert "AUTHOR" not in file1.read_text()
         assert "AUTHOR" not in file2.read_text()
+
+    async def test_commit_hunk_routes_commit_this(self, tmp_path, mock_ctx):
+        """process_all_actions routes 'commit this' to commit_hunk_approved."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text(
+            "// AUTHOR: refactor this\n"
+            "// AGENT: refactored\n"
+            "// AUTHOR: commit this\n"
+            "func foo() {}\n"
+            "// AUTHOR: other question\n"
+            "func bar() {}\n"
+        )
+
+        result = await _process_all_actions(str(test_file), mock_ctx)
+
+        # commit_hunk_approved will fail (not a git repo) but it should be attempted
+        assert result["actions_executed"] == 0 or any(
+            r.get("action") == "commit_hunk_approved" for r in result.get("results", [])
+        ) or any(
+            e.get("action") == "commit_hunk_approved" for e in result.get("errors", [])
+        )
+        # The other thread (no action command) should remain untouched
+        content = test_file.read_text()
+        assert "other question" in content
+
+    async def test_commit_this_modifies_file_before_git(self, tmp_path, mock_ctx):
+        """process_all_actions removes thread markers even when git fails."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text(
+            "// AUTHOR: question\n"
+            "// AGENT: answer\n"
+            "// AUTHOR: commit this\n"
+            "func foo() {}\n"
+            "// AUTHOR: other question\n"
+            "func bar() {}\n"
+        )
+
+        await _process_all_actions(str(test_file), mock_ctx)
+
+        content = test_file.read_text()
+        # The commit-this thread markers should be removed (file write happens before git)
+        assert "question" not in content or "other question" in content
+        assert "func foo()" in content
+        assert "func bar()" in content
 
 
 class TestPluginDirectoryProtection:

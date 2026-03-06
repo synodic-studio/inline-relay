@@ -102,6 +102,47 @@ Clear ALL thread markers from a file and commit that file only.
 
 ---
 
+## `commit_hunk_approved`
+
+Remove a single thread's markers and commit changes from just this thread.
+
+### Parameters
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `thread_id` | string | Yes | ID from `get_threads` |
+| `path` | string | Yes | Directory or file to search. Use same path as `get_threads`. |
+| `message` | string | No | Commit message. Auto-generates if not provided. |
+
+### Returns
+
+```json
+{
+  "success": true,
+  "file": "Sources/App/NetworkManager.swift",
+  "lines_removed": 3,
+  "commit_hash": "a1b2c3d"
+}
+```
+
+### Behavior
+
+1. Validates thread has `action_required.action == "commit_hunk_approved"`
+2. Removes ONLY the specified thread's `// AUTHOR:` and `// AGENT:` lines
+3. Other threads in the same file remain intact
+4. Stages and commits only this file with just those changes
+5. Auto-generates commit message from first AUTHOR text if not provided
+
+### When to Call
+
+Only when `action_required.action == "commit_hunk_approved"`. Triggered by AUTHOR writing exactly `commit this` or `commit this thread`.
+
+Differs from `clear_and_commit`:
+- `clear_and_commit`: removes ALL thread markers from file, commits entire file
+- `commit_hunk_approved`: removes ONE thread's markers, commits file (other threads preserved)
+
+---
+
 ## `dismiss_thread`
 
 Remove a single thread without committing.
