@@ -91,6 +91,17 @@ def emit_warning(message: str) -> None:
     print(message, file=sys.stderr)
 
 
+# All recognized thread marker prefixes (constructed to avoid literal markers in source)
+_COMMENT_PREFIXES = ["//", "#", "--"]
+_MARKER_ROLES = ["AUTHOR:", "AGENT:"]
+_MARKER_PATTERNS = [f"{p} {r}" for p in _COMMENT_PREFIXES for r in _MARKER_ROLES]
+
+
+def _contains_thread_markers(text: str) -> bool:
+    """Check if text contains any thread marker pattern."""
+    return any(pattern in text for pattern in _MARKER_PATTERNS)
+
+
 def edit_touches_thread_markers(tool_input: dict) -> bool:
     """
     Detect Edit tool touching ANY thread markers (old or new string).
@@ -107,10 +118,7 @@ def edit_touches_thread_markers(tool_input: dict) -> bool:
     old_string = tool_input.get("old_string", "")
     new_string = tool_input.get("new_string", "")
 
-    has_markers_old = "// AUTHOR:" in old_string or "// AGENT:" in old_string
-    has_markers_new = "// AUTHOR:" in new_string or "// AGENT:" in new_string
-
-    return has_markers_old or has_markers_new
+    return _contains_thread_markers(old_string) or _contains_thread_markers(new_string)
 
 
 def validate_thread_edit(tool_input: dict) -> dict | None:
@@ -135,7 +143,7 @@ def validate_thread_edit(tool_input: dict) -> dict | None:
         emit_warning("=" * 60)
         emit_warning("🚫 BLOCKED: Edit touches thread markers!")
         emit_warning("")
-        emit_warning("Thread markers (// AUTHOR: and // AGENT:) are READ-ONLY.")
+        emit_warning("Thread markers (// or # or -- AUTHOR:/AGENT:) are READ-ONLY.")
         emit_warning("You cannot add, edit, or remove them via the Edit tool.")
         emit_warning("")
         emit_warning("Use the inline-dialogue MCP tools instead:")
@@ -178,7 +186,7 @@ def file_has_thread_markers(file_path: str) -> bool:
         # File doesn't exist yet - no markers to protect
         return False
 
-    return "// AUTHOR:" in content or "// AGENT:" in content
+    return _contains_thread_markers(content)
 
 
 def validate_write(tool_input: dict) -> dict | None:
@@ -204,7 +212,7 @@ def validate_write(tool_input: dict) -> dict | None:
         emit_warning("=" * 60)
         emit_warning("🚫 BLOCKED: Write to file with thread markers!")
         emit_warning("")
-        emit_warning("This file contains // AUTHOR: or // AGENT: markers.")
+        emit_warning("This file contains AUTHOR:/AGENT: thread markers.")
         emit_warning("Files with thread markers are READ-ONLY via Write tool.")
         emit_warning("")
         emit_warning("Use the inline-dialogue MCP tools instead:")

@@ -9,6 +9,7 @@ from fastmcp import Context, FastMCP
 from .core import (
     AGENT_PATTERN,
     AUTHOR_PATTERN,
+    extract_prefix_from_line,
     find_all_threads,
     find_git_root,
     find_thread_by_id,
@@ -172,10 +173,11 @@ async def respond_to_thread(thread_id: str, response: str, path: str, ctx: Conte
 
     lines = content.splitlines()
 
-    # Detect existing thread indentation from first line
+    # Detect existing thread indentation and comment prefix from first line
     first_line = lines[start_line - 1]
     indent_match = AUTHOR_PATTERN.match(first_line)
     indent = indent_match.group(1) if indent_match else ""
+    prefix = extract_prefix_from_line(first_line)
 
     thread_end = start_line - 1
     last_match = None
@@ -221,11 +223,11 @@ async def respond_to_thread(thread_id: str, response: str, path: str, ctx: Conte
         prev_match = AGENT_PATTERN.match(prev_line)
         prev_indent = prev_match.group(1) if prev_match else ""
         prev_text = prev_match.group(2).strip() if prev_match else ""
-        lines[prev_agent_line_idx] = f"{prev_indent}// AGENT: {prev_text} | {response}"
+        lines[prev_agent_line_idx] = f"{prev_indent}{prefix} AGENT: {prev_text} | {response}"
     else:
         new_lines = [
-            f"{indent}// AGENT: {response}",
-            f"{indent}// AUTHOR: ",
+            f"{indent}{prefix} AGENT: {response}",
+            f"{indent}{prefix} AUTHOR: ",
         ]
         lines = lines[: thread_end + 1] + new_lines + lines[thread_end + 1:]
 
