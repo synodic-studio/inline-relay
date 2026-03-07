@@ -29,6 +29,7 @@ from inline_dialogue_mcp.core import (
 from inline_dialogue_mcp.server import (
     dismiss_thread,
     get_threads,
+    process_all_actions,
     respond_to_thread,
 )
 
@@ -36,6 +37,7 @@ from inline_dialogue_mcp.server import (
 _get_threads = get_threads.fn
 _respond_to_thread = respond_to_thread.fn
 _dismiss_thread = dismiss_thread.fn
+_process_all_actions = process_all_actions.fn
 
 
 @pytest.fixture
@@ -1069,6 +1071,116 @@ class TestActionCommandDetection:
         thread = result["threads"][0]
         assert "action_required" not in thread
         assert thread["status"] == "awaiting_author"
+
+
+class TestProcessAllActions:
+    """Tests for process_all_actions batch execution tool."""
+
+    async def test_no_pending_actions(self, tmp_path, mock_ctx):
+        """Returns success with zero actions when no commands pending."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("// AUTHOR: question?\n// AGENT: answer\n// AUTHOR: \nfunc foo() {}\n")
+
+        result = await _process_all_actions(str(test_file), mock_ctx)
+
+        assert result["success"] is True
+        assert result["actions_executed"] == 0
+
+    async def test_dismiss_done_command(self, tmp_path, mock_ctx):
+        """Dismisses thread when AUTHOR writes 'done'."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("// AUTHOR: question?\n// AGENT: answer\n// AUTHOR: done\nfunc foo() {}\n")
+
+        result = await _process_all_actions(str(test_file), mock_ctx)
+
+        assert result["success"] is True
+        assert result["actions_executed"] == 1
+        assert result["results"][0]["action"] == "dismiss_thread"
+        # Thread markers should be removed from file
+        content = test_file.read_text()
+        assert "AUTHOR" not in content
+        assert "AGENT" not in content
+        assert "func foo()" in content
+
+    async def test_dismiss_reset_command(self, tmp_path, mock_ctx):
+        """Dismisses thread when AUTHOR writes 'reset'."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("// AUTHOR: question?\n// AGENT: answer\n// AUTHOR: reset\nfunc foo() {}\n")
+
+        result = await _process_all_actions(str(test_file), mock_ctx)
+
+        assert result["success"] is True
+        assert result["actions_executed"] == 1
+        assert result["results"][0]["action"] == "dismiss_thread"
+        content = test_file.read_text()
+        assert "AUTHOR" not in content
+
+    async def test_multiple_dismiss_same_file(self, tmp_path, mock_ctx):
+        """Dismisses multiple threads from the same file."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text(
+            "// AUTHOR: first question\n// AGENT: first answer\n// AUTHOR: done\n"
+            "func foo() {}\n"
+            "// AUTHOR: second question\n// AGENT: second answer\n// AUTHOR: done\n"
+            "func bar() {}\n"
+        )
+
+        result = await _process_all_actions(str(test_file), mock_ctx)
+
+        assert result["success"] is True
+        assert result["actions_executed"] == 2
+        content = test_file.read_text()
+        assert "AUTHOR" not in content
+        assert "func foo()" in content
+        assert "func bar()" in content
+
+    async def test_skips_non_command_threads(self, tmp_path, mock_ctx):
+        """Leaves threads without termination commands untouched."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text(
+            "// AUTHOR: needs response\nfunc foo() {}\n"
+            "// AUTHOR: question\n// AGENT: answer\n// AUTHOR: done\nfunc bar() {}\n"
+        )
+
+        result = await _process_all_actions(str(test_file), mock_ctx)
+
+        assert result["success"] is True
+        assert result["actions_executed"] == 1
+        content = test_file.read_text()
+        # The non-command thread should still be there
+        assert "needs response" in content
+        # The done thread should be gone
+        assert "done" not in content
+
+    async def test_no_threads_at_all(self, tmp_path, mock_ctx):
+        """Returns success when file has no threads."""
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("func foo() {}\nfunc bar() {}\n")
+
+        result = await _process_all_actions(str(test_file), mock_ctx)
+
+        assert result["success"] is True
+        assert result["actions_executed"] == 0
+
+    async def test_path_not_found(self, tmp_path, mock_ctx):
+        """Returns error for nonexistent path."""
+        result = await _process_all_actions(str(tmp_path / "nonexistent"), mock_ctx)
+
+        assert "error" in result
+
+    async def test_directory_scan(self, tmp_path, mock_ctx):
+        """Processes actions across multiple files in a directory."""
+        file1 = tmp_path / "a.swift"
+        file1.write_text("// AUTHOR: q1\n// AGENT: a1\n// AUTHOR: done\nfunc a() {}\n")
+        file2 = tmp_path / "b.swift"
+        file2.write_text("// AUTHOR: q2\n// AGENT: a2\n// AUTHOR: done\nfunc b() {}\n")
+
+        result = await _process_all_actions(str(tmp_path), mock_ctx)
+
+        assert result["success"] is True
+        assert result["actions_executed"] == 2
+        assert "AUTHOR" not in file1.read_text()
+        assert "AUTHOR" not in file2.read_text()
 
 
 class TestPluginDirectoryProtection:

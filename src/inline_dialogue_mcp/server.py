@@ -454,5 +454,106 @@ async def dismiss_thread(thread_id: str, path: str, ctx: Context) -> dict:
     }
 
 
+@mcp.tool()
+async def process_all_actions(path: str, ctx: Context) -> dict:
+    """Execute all pending termination commands (done/reset/commit) in one call.
+
+    Scans for threads where AUTHOR wrote a termination command and executes
+    each action automatically:
+    - done/reset: thread markers removed (same as dismiss_thread)
+    - commit/commit file: all markers cleared and file committed (same as clear_and_commit)
+
+    Commits are executed before dismissals. If a file has both commit and
+    dismiss actions, the commit takes priority (it clears everything).
+
+    Args:
+        path: Path to directory or file to search. Use "." for current project.
+
+    Returns:
+        Summary of actions executed with per-action results.
+    """
+    search_path = await resolve_path(path, ctx)
+    if not search_path.exists():
+        return {"error": f"Path not found: {path}"}
+
+    normalize_all_inline_comments(search_path)
+
+    try:
+        threads, warnings = find_all_threads(search_path)
+    except (ValueError, Exception) as e:
+        return {"error": str(e)}
+
+    if warnings:
+        salt_duplicate_threads(warnings)
+        threads, warnings = find_all_threads(search_path)
+
+    actionable = [t for t in threads if "action_required" in t]
+
+    if not actionable:
+        return {"success": True, "actions_executed": 0, "note": "No pending actions found."}
+
+    # Group: files needing commit vs threads needing dismiss
+    commit_files = {}
+    dismiss_threads = []
+    for thread in actionable:
+        action = thread["action_required"]["action"]
+        if action == "clear_and_commit":
+            commit_files[thread["file"]] = thread
+        elif action == "dismiss_thread":
+            dismiss_threads.append(thread)
+
+    # Skip dismiss for files that will be committed (commit clears everything)
+    dismiss_threads = [t for t in dismiss_threads if t["file"] not in commit_files]
+
+    results = []
+    errors = []
+
+    # Execute commits first (clear_and_commit handles whole files)
+    for file_path_str in commit_files:
+        result = clear_and_commit.fn(file_path_str)
+        if result.get("success"):
+            results.append({
+                "action": "clear_and_commit",
+                "file": file_path_str,
+                "lines_removed": result.get("lines_removed", 0),
+                "commit_hash": result.get("commit_hash", "unknown"),
+            })
+        else:
+            errors.append({
+                "action": "clear_and_commit",
+                "file": file_path_str,
+                "error": result.get("error", "Unknown error"),
+            })
+
+    # Execute dismissals (re-finds thread each time since file may have changed)
+    for thread in dismiss_threads:
+        result = await dismiss_thread.fn(thread["id"], path, ctx)
+        if result.get("success"):
+            results.append({
+                "action": "dismiss_thread",
+                "thread_id": thread["id"],
+                "file": thread["file"],
+                "lines_removed": result.get("lines_removed", 0),
+            })
+        else:
+            errors.append({
+                "action": "dismiss_thread",
+                "thread_id": thread["id"],
+                "file": thread["file"],
+                "error": result.get("error", "Unknown error"),
+            })
+
+    summary = {
+        "success": len(errors) == 0,
+        "actions_executed": len(results),
+        "results": results,
+    }
+
+    if errors:
+        summary["errors"] = errors
+
+    return summary
+
+
 if __name__ == "__main__":
     mcp.run()
