@@ -453,6 +453,117 @@ async def dismiss_thread(thread_id: str, path: str, ctx: Context) -> dict:
 
 
 @mcp.tool()
+async def commit_hunk_approved(thread_id: str, path: str, ctx: Context, message: str = "") -> dict:
+    """Remove a single thread's markers and commit changes from just this thread.
+
+    Use when AUTHOR writes "commit this" or "commit this thread". Unlike
+    clear_and_commit (which removes ALL thread markers from a file), this only
+    removes the specified thread's markers and commits, leaving other threads intact.
+
+    Only call when action_required says "commit_hunk_approved".
+
+    Args:
+        thread_id: ID from get_threads.
+        path: Directory or file to search for the thread. Use "." for current project.
+        message: Commit message. Auto-generates if not provided.
+
+    Returns:
+        Success status, file modified, lines removed, and commit hash.
+    """
+    search_path = await resolve_path(path, ctx)
+    thread = find_thread_by_id(search_path, thread_id)
+    if thread is None:
+        return {"success": False, "error": f"Thread not found: {thread_id}"}
+
+    action = thread.get("action_required", {})
+    if action.get("action") != "commit_hunk_approved":
+        status = thread.get("status", "unknown")
+        if status == "awaiting_author":
+            return {
+                "success": False,
+                "error": "Cannot commit: thread is awaiting human response.",
+            }
+        else:
+            return {
+                "success": False,
+                "error": "Cannot commit: thread does not have a commit_hunk_approved command. "
+                         "Only commit when AUTHOR writes 'commit this' or 'commit this thread'.",
+            }
+
+    file_path = Path(thread["file"])
+    first_author_text = thread["thread"][0]["text"]
+
+    start_line = find_thread_location(file_path, first_author_text)
+    if start_line is None:
+        return {"success": False, "error": "Could not locate thread in file"}
+
+    try:
+        content = file_path.read_text()
+    except (OSError, UnicodeDecodeError) as e:
+        return {"success": False, "error": str(e)}
+
+    lines = content.splitlines()
+
+    thread_start = start_line - 1
+    thread_end = start_line - 1
+    for i in range(start_line - 1, len(lines)):
+        line = lines[i]
+        if AUTHOR_PATTERN.match(line) or AGENT_PATTERN.match(line):
+            thread_end = i
+        else:
+            break
+
+    lines_removed = thread_end - thread_start + 1
+    lines = lines[:thread_start] + lines[thread_end + 1:]
+
+    try:
+        file_path.write_text("\n".join(lines) + "\n")
+    except OSError as e:
+        return {"success": False, "error": str(e)}
+
+    if not message:
+        message = f"Commit thread: {first_author_text[:60]}"
+
+    try:
+        subprocess.run(
+            ["git", "add", str(file_path)],
+            check=True,
+            cwd=file_path.parent,
+        )
+        result = subprocess.run(
+            ["git", "commit", "-m", message, "--", str(file_path)],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=file_path.parent,
+        )
+        hash_match = re.search(r"\[[\w-]+\s+([a-f0-9]+)\]", result.stdout)
+        commit_hash = hash_match.group(1) if hash_match else "unknown"
+    except subprocess.CalledProcessError as e:
+        return {
+            "success": False,
+            "error": f"Git commit failed: {e.stderr}",
+            "lines_removed": lines_removed,
+        }
+
+    log_thread_event(
+        file_path=str(file_path),
+        thread_id=thread_id,
+        event_type="commit_hunk",
+        first_author_text=first_author_text,
+        thread_content=thread["thread"],
+        status="committed",
+    )
+
+    return {
+        "success": True,
+        "file": str(file_path),
+        "lines_removed": lines_removed,
+        "commit_hash": commit_hash,
+    }
+
+
+@mcp.tool()
 async def process_all_actions(path: str, ctx: Context) -> dict:
     """Execute all pending termination commands (done/reset/commit) in one call.
 
@@ -460,9 +571,10 @@ async def process_all_actions(path: str, ctx: Context) -> dict:
     each action automatically:
     - done/reset: thread markers removed (same as dismiss_thread)
     - commit/commit file: all markers cleared and file committed (same as clear_and_commit)
+    - commit this/commit this thread: single thread markers removed and committed (same as commit_hunk_approved)
 
-    Commits are executed before dismissals. If a file has both commit and
-    dismiss actions, the commit takes priority (it clears everything).
+    clear_and_commit takes priority: if a file has both clear_and_commit and other
+    actions, the clear_and_commit runs and all other per-thread actions for that file are skipped.
 
     Args:
         path: Path to directory or file to search. Use "." for current project.
@@ -490,23 +602,27 @@ async def process_all_actions(path: str, ctx: Context) -> dict:
     if not actionable:
         return {"success": True, "actions_executed": 0, "note": "No pending actions found."}
 
-    # Group: files needing commit vs threads needing dismiss
+    # Group actions: clear_and_commit takes priority over per-thread actions
     commit_files = {}
+    commit_hunk_threads = []
     dismiss_threads = []
     for thread in actionable:
         action = thread["action_required"]["action"]
         if action == "clear_and_commit":
             commit_files[thread["file"]] = thread
+        elif action == "commit_hunk_approved":
+            commit_hunk_threads.append(thread)
         elif action == "dismiss_thread":
             dismiss_threads.append(thread)
 
-    # Skip dismiss for files that will be committed (commit clears everything)
+    # Skip per-thread actions for files that will be clear_and_committed
+    commit_hunk_threads = [t for t in commit_hunk_threads if t["file"] not in commit_files]
     dismiss_threads = [t for t in dismiss_threads if t["file"] not in commit_files]
 
     results = []
     errors = []
 
-    # Execute commits first (clear_and_commit handles whole files)
+    # Execute clear_and_commit first (handles whole files)
     for file_path_str in commit_files:
         result = clear_and_commit.fn(file_path_str)
         if result.get("success"):
@@ -520,6 +636,25 @@ async def process_all_actions(path: str, ctx: Context) -> dict:
             errors.append({
                 "action": "clear_and_commit",
                 "file": file_path_str,
+                "error": result.get("error", "Unknown error"),
+            })
+
+    # Execute commit_hunk_approved (each makes a separate commit for one thread)
+    for thread in commit_hunk_threads:
+        result = await commit_hunk_approved.fn(thread["id"], path, ctx)
+        if result.get("success"):
+            results.append({
+                "action": "commit_hunk_approved",
+                "thread_id": thread["id"],
+                "file": thread["file"],
+                "lines_removed": result.get("lines_removed", 0),
+                "commit_hash": result.get("commit_hash", "unknown"),
+            })
+        else:
+            errors.append({
+                "action": "commit_hunk_approved",
+                "thread_id": thread["id"],
+                "file": thread["file"],
                 "error": result.get("error", "Unknown error"),
             })
 
