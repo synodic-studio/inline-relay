@@ -1,6 +1,5 @@
 {
   "name": "inline-dialogue",
-  "version": "0.2.3",
   "description": "AUTHOR/AGENT inline code review threads - MCP tools and edit guards",
   "author": {
     "name": "Synodic Studio"
