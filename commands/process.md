@@ -10,7 +10,7 @@ allowed-tools:
   - mcp__inline-relay__clear_and_commit
 ---
 
-# Process Inline Dialogue Threads
+# Process inline-relay Threads
 
 Scan for and process all AUTHOR/AGENT threads in the codebase.
 
