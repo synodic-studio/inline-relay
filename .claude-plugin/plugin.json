@@ -2,7 +2,8 @@
   "name": "inline-dialogue",
   "description": "AUTHOR/AGENT inline code review threads - MCP tools and edit guards",
   "author": {
-    "name": "Synodic Studio"
+    "name": "Adrien Lipari",
+    "email": "adrien@synodic.co"
   },
   "mcpServers": "./.mcp.json"
 }

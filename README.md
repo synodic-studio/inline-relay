@@ -1,69 +1,47 @@
 # inline-dialogue-plugin
 
-Claude Code plugin for AUTHOR/AGENT inline code review threads.
+A Claude Code plugin for code review conversations that live inside the source files themselves. You leave a question as a tagged comment. Claude responds in another tagged comment, indented underneath. The whole thread is plain text in the file, versioned with git, visible in diffs.
 
-## Overview
+> Source: [github.com/synodic-studio/inline-dialogue-plugin](https://github.com/synodic-studio/inline-dialogue-plugin). MIT-licensed.
 
-This plugin provides:
-- **Command** `/inline-dialogue:process` - Kick off thread processing workflow
-- **Skill** - Behavioral guidance for working with threads (loads contextually)
-- **MCP server** - Tools for scanning, reading, and responding to threads
-- **Edit guards** (hooks) - Warnings to prevent thread corruption
+## Why this exists
 
-## Installation
+Most code review tools assume the conversation lives somewhere other than the code. GitHub PRs, Linear comments, Slack threads, Google Docs. The discussion is separated from the artifact, and the artifact is what you actually need to change. This plugin moves the conversation into the file.
 
-Add to your Claude Code plugins directory or install via `claude plugins add`.
+You write a comment like:
 
-## Usage
-
-```
-/inline-dialogue:process [path]
+```python
+# AUTHOR: Should this retry on 500s, or is that the caller's job?
+#
 ```
 
-Scans for threads and processes all `awaiting_agent` threads until none remain.
+Claude reads that, decides what to do, and edits the file to add a response:
 
-## Structure
-
-```
-inline-dialogue-plugin/
-├── .claude-plugin/plugin.json
-├── commands/
-│   └── process.md              # /inline-dialogue:process command
-├── skills/
-│   └── inline-dialogue-workflow/
-│       └── SKILL.md            # Behavioral guidance
-├── hooks/
-│   ├── hooks.json
-│   └── pre_tool_use.py         # Thread edit guards
-├── src/
-│   └── inline_dialogue_mcp/    # MCP server code
-├── .mcp.json
-└── pyproject.toml
+```python
+# AUTHOR: Should this retry on 500s, or is that the caller's job?
+# AGENT: Caller's job. This function is a thin wrapper around the SDK
+#        and the SDK already has its own retry policy. Adding a second
+#        retry layer here would compound delays.
+#
 ```
 
-## MCP Tools
+The trailing empty comment is a cursor for your next reply. When you write text in it, the thread becomes `awaiting_agent` again.
 
-- `get_threads` - Find all AUTHOR/AGENT threads in a directory
-- `respond_to_thread` - Add a response to a thread
-- `dismiss_thread` - Remove a completed thread
-- `clear_and_commit` - Remove thread and commit file
+## What's in the plugin
 
-## Thread Format
+- **One command:** `/inline-dialogue:process` scans for threads in a path and works through them until none are awaiting the agent.
+- **One skill** that loads contextually when threads are involved and gives the agent behavioral guidance.
+- **MCP server** with four tools: `get_threads`, `respond_to_thread`, `dismiss_thread`, `clear_and_commit`.
+- **Pre-tool-use hooks** that block normal Edit/Write calls from accidentally trampling thread markers. The MCP server has exclusive write access.
 
-Threads are inline code comments:
+## Install
 
-```swift
-// AUTHOR: Why is this method so slow?
-// AGENT: The current implementation has O(n²) complexity...
-// AUTHOR: Can we optimize it?
-// AGENT: Done. Refactored to use a hash map - now O(n).
-// AUTHOR:
-```
+Add to your Claude Code plugins via the synodic-studio marketplace, or run `claude plugins add` against this repo.
 
-## Development
+## Notes
 
-```bash
-uv sync              # Install dependencies
-uv run pytest        # Run tests
-uv run inline-dialogue-mcp  # Run MCP server directly
-```
+Thread IDs are content-addressable (`SHA256(file_path + first_comment_text)[:8]`), so threads survive line drift from edits above them. Future-tense responses ("I will fix this") are blocked at format-check time, because the agent should do the work first and respond with what it actually did.
+
+## Companion piece
+
+[synodic.co/inline-dialogue](https://synodic.co/inline-dialogue/) walks through the design in more detail, including the variant of this same idea that uses GitHub draft PRs as the review surface instead of inline source comments.
