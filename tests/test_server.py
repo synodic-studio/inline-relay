@@ -1,11 +1,11 @@
-"""Tests for inline-dialogue MCP server thread handling."""
+"""Tests for inline-relay MCP server thread handling."""
 
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from inline_dialogue_mcp.core import (
+from inline_relay_mcp.core import (
     DASH_COMMENT_EXTENSIONS,
     HASH_COMMENT_EXTENSIONS,
     INLINE_AUTHOR_PATTERN,
@@ -26,7 +26,7 @@ from inline_dialogue_mcp.core import (
     strip_empty_trailing_author,
     uses_slash_comments,
 )
-from inline_dialogue_mcp.server import (
+from inline_relay_mcp.server import (
     dismiss_thread,
     get_threads,
     process_all_actions,
@@ -1188,7 +1188,7 @@ class TestPluginDirectoryProtection:
 
     def test_is_plugin_directory_detects_plugin(self, tmp_path):
         """Detects plugin directory by .claude-plugin/plugin.json."""
-        from inline_dialogue_mcp.core import is_plugin_directory
+        from inline_relay_mcp.core import is_plugin_directory
 
         # Create plugin structure
         plugin_dir = tmp_path / ".claude-plugin"
@@ -1200,13 +1200,13 @@ class TestPluginDirectoryProtection:
 
     def test_is_plugin_directory_non_plugin(self, tmp_path):
         """Regular directories are not detected as plugins."""
-        from inline_dialogue_mcp.core import is_plugin_directory
+        from inline_relay_mcp.core import is_plugin_directory
 
         assert is_plugin_directory(tmp_path) is False
 
     def test_find_all_threads_rejects_plugin_directory(self, tmp_path):
         """find_all_threads raises ValueError for plugin directories."""
-        from inline_dialogue_mcp.core import find_all_threads
+        from inline_relay_mcp.core import find_all_threads
 
         # Create plugin structure
         plugin_dir = tmp_path / ".claude-plugin"
@@ -1234,14 +1234,14 @@ class TestHookPluginDetection:
 
     def test_detects_development_plugin_by_plugin_json(self, tmp_path, monkeypatch):
         """Detects development plugin via .claude-plugin/plugin.json when CWD matches."""
-        from hooks.pre_tool_use import is_inline_dialogue_dev_directory, is_within_plugin
+        from hooks.pre_tool_use import is_inline_relay_dev_directory, is_within_plugin
 
         # Create plugin structure
         plugin_dir = tmp_path / ".claude-plugin"
         plugin_dir.mkdir()
-        (plugin_dir / "plugin.json").write_text('{"name": "inline-dialogue"}')
+        (plugin_dir / "plugin.json").write_text('{"name": "inline-relay"}')
 
-        assert is_inline_dialogue_dev_directory(str(tmp_path)) is True
+        assert is_inline_relay_dev_directory(str(tmp_path)) is True
 
         # File within should be detected when CWD is the plugin directory
         test_file = tmp_path / "skills" / "test.md"
@@ -1252,15 +1252,15 @@ class TestHookPluginDetection:
         monkeypatch.chdir(tmp_path)
         assert is_within_plugin(str(test_file)) is True
 
-    def test_rejects_non_inline_dialogue_plugin(self, tmp_path):
+    def test_rejects_non_inline_relay_plugin(self, tmp_path):
         """Rejects plugins with different names."""
-        from hooks.pre_tool_use import is_inline_dialogue_dev_directory
+        from hooks.pre_tool_use import is_inline_relay_dev_directory
 
         plugin_dir = tmp_path / ".claude-plugin"
         plugin_dir.mkdir()
         (plugin_dir / "plugin.json").write_text('{"name": "some-other-plugin"}')
 
-        assert is_inline_dialogue_dev_directory(str(tmp_path)) is False
+        assert is_inline_relay_dev_directory(str(tmp_path)) is False
 
     def test_rejects_file_outside_cwd(self, tmp_path, monkeypatch):
         """Rejects files outside CWD even if they are in a plugin directory."""
@@ -1269,7 +1269,7 @@ class TestHookPluginDetection:
         # Create plugin structure in tmp_path
         plugin_dir = tmp_path / ".claude-plugin"
         plugin_dir.mkdir()
-        (plugin_dir / "plugin.json").write_text('{"name": "inline-dialogue"}')
+        (plugin_dir / "plugin.json").write_text('{"name": "inline-relay"}')
         
         test_file = tmp_path / "test.py"
         test_file.write_text("code")
@@ -1313,7 +1313,7 @@ class TestGetCommentPrefix:
 
 
 # Helpers to construct marker strings without literal markers in source
-# (Literal markers in .py source get corrupted by inline-dialogue processing)
+# (Literal markers in .py source get corrupted by inline-relay processing)
 _HASH_AUTHOR = "#" + " AUTHOR:"
 _HASH_AGENT = "#" + " AGENT:"
 

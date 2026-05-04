@@ -1,12 +1,12 @@
 {
   "mcpServers": {
-    "inline-dialogue": {
+    "inline-relay": {
       "command": "uv",
       "args": [
         "--directory",
         "${CLAUDE_PLUGIN_ROOT}",
         "run",
-        "inline-dialogue-mcp"
+        "inline-relay-mcp"
       ]
     }
   }

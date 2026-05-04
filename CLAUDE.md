@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Project-specific guidance for Claude Code working on inline-dialogue-plugin.
+Project-specific guidance for Claude Code working on inline-relay.
 
 ## Project Overview
 
@@ -12,16 +12,16 @@ MCP plugin enabling AUTHOR/AGENT inline code review threads embedded in source c
 uv run pytest                    # Run all tests (80 tests)
 uv run pytest -x                 # Stop on first failure
 uv run pytest -k "test_name"     # Run specific test
-uv run python -m inline_dialogue_mcp.server  # Run MCP server
+uv run python -m inline_relay_mcp.server  # Run MCP server
 ```
 
 ## Architecture
 
-- `inline_dialogue_mcp/core.py` - Thread detection, normalization, ID computation
-- `inline_dialogue_mcp/server.py` - MCP tool implementations
+- `inline_relay_mcp/core.py` - Thread detection, normalization, ID computation
+- `inline_relay_mcp/server.py` - MCP tool implementations
 - `hooks/pre_tool_use.py` - Edit guards protecting thread markers
 - `tests/test_server.py` - All tests (organized by class)
-- `skills/inline-dialogue-workflow/SKILL.md` - Behavioral guidance for thread processing
+- `skills/inline-relay-workflow/SKILL.md` - Behavioral guidance for thread processing
 
 ## Critical: Verify Before Claiming
 

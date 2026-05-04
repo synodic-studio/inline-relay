@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Pre-tool-use hook for inline-dialogue thread edit guards.
+Pre-tool-use hook for inline-relay thread edit guards.
 
 Detects and BLOCKS edits that could corrupt AUTHOR/AGENT thread structure:
 1. Any Edit that touches thread markers (in old_string or new_string)
@@ -31,11 +31,11 @@ def get_plugin_root() -> str | None:
         return None
 
 
-def is_inline_dialogue_dev_directory(directory: str) -> bool:
-    """Check if a directory is an inline-dialogue plugin development directory.
+def is_inline_relay_dev_directory(directory: str) -> bool:
+    """Check if a directory is an inline-relay plugin development directory.
     
     Identifies by checking for .claude-plugin/plugin.json with name containing
-    "inline-dialogue".
+    "inline-relay".
     """
     if not directory or not os.path.isdir(directory):
         return False
@@ -46,7 +46,7 @@ def is_inline_dialogue_dev_directory(directory: str) -> bool:
             with open(plugin_json, "r") as f:
                 import json
                 data = json.load(f)
-                if "inline-dialogue" in data.get("name", "").lower():
+                if "inline-relay" in data.get("name", "").lower():
                     return True
         return False
     except Exception:
@@ -61,7 +61,7 @@ def is_within_plugin(file_path: str) -> bool:
     
     Allows edits when:
     1. File is within the installed plugin (where this hook runs from), OR
-    2. CWD is an inline-dialogue dev directory AND file is within CWD
+    2. CWD is an inline-relay dev directory AND file is within CWD
     """
     if not file_path:
         return False
@@ -74,9 +74,9 @@ def is_within_plugin(file_path: str) -> bool:
         if plugin_root and abs_file.startswith(plugin_root + os.sep):
             return True
         
-        # Check if CWD is an inline-dialogue dev directory and file is within it
+        # Check if CWD is an inline-relay dev directory and file is within it
         cwd = os.getcwd()
-        if is_inline_dialogue_dev_directory(cwd):
+        if is_inline_relay_dev_directory(cwd):
             abs_cwd = os.path.abspath(cwd)
             if abs_file.startswith(abs_cwd + os.sep):
                 return True
@@ -146,7 +146,7 @@ def validate_thread_edit(tool_input: dict) -> dict | None:
         emit_warning("Thread markers (// or # or -- AUTHOR:/AGENT:) are READ-ONLY.")
         emit_warning("You cannot add, edit, or remove them via the Edit tool.")
         emit_warning("")
-        emit_warning("Use the inline-dialogue MCP tools instead:")
+        emit_warning("Use the inline-relay MCP tools instead:")
         emit_warning("  • respond_to_thread(thread_id, response, path)")
         emit_warning("  • dismiss_thread(thread_id, path)")
         emit_warning("  • clear_and_commit(file, message)")
@@ -215,7 +215,7 @@ def validate_write(tool_input: dict) -> dict | None:
         emit_warning("This file contains AUTHOR:/AGENT: thread markers.")
         emit_warning("Files with thread markers are READ-ONLY via Write tool.")
         emit_warning("")
-        emit_warning("Use the inline-dialogue MCP tools instead:")
+        emit_warning("Use the inline-relay MCP tools instead:")
         emit_warning("  • respond_to_thread(thread_id, response, path)")
         emit_warning("  • dismiss_thread(thread_id, path)")
         emit_warning("  • clear_and_commit(file, message)")

@@ -1,4 +1,4 @@
-"""inline-dialogue MCP server for managing AUTHOR/AGENT code review threads."""
+"""inline-relay MCP server for managing AUTHOR/AGENT code review threads."""
 
 import re
 import subprocess
@@ -19,7 +19,7 @@ from .core import (
     salt_duplicate_threads,
 )
 
-mcp = FastMCP("inline-dialogue")
+mcp = FastMCP("inline-relay")
 
 
 async def resolve_path(path: str, ctx: Context) -> Path:

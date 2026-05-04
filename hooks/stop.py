@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Stop hook for inline-dialogue plugin.
+Stop hook for inline-relay plugin.
 
 Commits the threads.db database on stop. Push happens at session end
 via synodic-kit's stop.py which handles the whole claude-session-db repo.

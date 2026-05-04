@@ -4,10 +4,10 @@ argument-hint: "[path]"
 allowed-tools:
   - Read
   - Edit
-  - mcp__inline-dialogue__get_threads
-  - mcp__inline-dialogue__respond_to_thread
-  - mcp__inline-dialogue__dismiss_thread
-  - mcp__inline-dialogue__clear_and_commit
+  - mcp__inline-relay__get_threads
+  - mcp__inline-relay__respond_to_thread
+  - mcp__inline-relay__dismiss_thread
+  - mcp__inline-relay__clear_and_commit
 ---
 
 # Process Inline Dialogue Threads

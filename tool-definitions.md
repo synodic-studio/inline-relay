@@ -1,4 +1,4 @@
-# inline-dialogue MCP Server - Tool Definitions
+# inline-relay MCP Server - Tool Definitions
 
 ## `get_threads`
 

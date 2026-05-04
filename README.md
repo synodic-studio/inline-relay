@@ -1,8 +1,8 @@
-# inline-dialogue-plugin
+# inline-relay
 
 A Claude Code plugin for code review conversations that live inside the source files themselves. You leave a question as a tagged comment. Claude responds in another tagged comment, indented underneath. The whole thread is plain text in the file, versioned with git, visible in diffs.
 
-> Source: [github.com/synodic-studio/inline-dialogue-plugin](https://github.com/synodic-studio/inline-dialogue-plugin). MIT-licensed.
+> Source: [github.com/synodic-studio/inline-relay](https://github.com/synodic-studio/inline-relay). MIT-licensed.
 
 ## Why this exists
 
@@ -29,7 +29,7 @@ The trailing empty comment is a cursor for your next reply. When you write text 
 
 ## What's in the plugin
 
-- **One command:** `/inline-dialogue:process` scans for threads in a path and works through them until none are awaiting the agent.
+- **One command:** `/inline-relay:process` scans for threads in a path and works through them until none are awaiting the agent.
 - **One skill** that loads contextually when threads are involved and gives the agent behavioral guidance.
 - **MCP server** with four tools: `get_threads`, `respond_to_thread`, `dismiss_thread`, `clear_and_commit`.
 - **Pre-tool-use hooks** that block normal Edit/Write calls from accidentally trampling thread markers. The MCP server has exclusive write access.
@@ -44,4 +44,4 @@ Thread IDs are content-addressable (`SHA256(file_path + first_comment_text)[:8]`
 
 ## Companion piece
 
-[synodic.co/inline-dialogue](https://synodic.co/inline-dialogue/) walks through the design in more detail, including the variant of this same idea that uses GitHub draft PRs as the review surface instead of inline source comments.
+[synodic.co/inline-relay](https://synodic.co/inline-relay/) walks through the design in more detail, including the variant of this same idea that uses GitHub draft PRs as the review surface instead of inline source comments.

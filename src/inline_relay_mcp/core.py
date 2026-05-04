@@ -1,4 +1,4 @@
-"""Core logic for inline-dialogue thread parsing and manipulation."""
+"""Core logic for inline-relay thread parsing and manipulation."""
 
 import hashlib
 import json
@@ -616,7 +616,7 @@ def log_thread_event(
 
     Args:
         file_path: Path to file containing the thread
-        thread_id: The inline-dialogue thread hash ID
+        thread_id: The inline-relay thread hash ID
         event_type: Type of event (respond, dismiss, commit)
         first_author_text: Original AUTHOR request that started thread
         thread_content: Full thread array (will be JSON serialized)

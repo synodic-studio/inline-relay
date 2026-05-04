@@ -1,5 +1,5 @@
 [project]
-name = "inline-dialogue-mcp"
+name = "inline-relay-mcp"
 version = "0.1.4"
 description = "MCP server for managing AUTHOR/AGENT code review threads"
 readme = "README.md"
@@ -15,7 +15,7 @@ dev = [
 ]
 
 [project.scripts]
-inline-dialogue-mcp = "inline_dialogue_mcp.server:mcp.run"
+inline-relay-mcp = "inline_relay_mcp.server:mcp.run"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
