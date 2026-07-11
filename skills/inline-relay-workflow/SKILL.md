@@ -12,10 +12,12 @@ Behavioral guidance for processing AUTHOR/AGENT inline code review threads.
 ## Running the CLI
 
 All thread operations go through the `inline-relay` CLI. It prints JSON to
-stdout and exits non-zero on failure. Invoke it from the plugin root:
+stdout and exits non-zero on failure. Invoke it with `--project` so the plugin
+is selected *without* changing the working directory — paths you pass then
+resolve against the project you're reviewing, not the plugin:
 
 ```bash
-IR="uv --directory \"$CLAUDE_PLUGIN_ROOT\" run inline-relay"
+IR="uv run --project \"$CLAUDE_PLUGIN_ROOT\" inline-relay"
 
 # Find all threads under a path (default ".")
 $IR get-threads path/to/scan

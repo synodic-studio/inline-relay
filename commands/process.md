@@ -17,7 +17,7 @@ rules (act first, past tense, editing around markers).
 The CLI lives in the plugin; invoke it as:
 
 ```bash
-uv --directory "$CLAUDE_PLUGIN_ROOT" run inline-relay <subcommand> ...
+uv run --project "$CLAUDE_PLUGIN_ROOT" inline-relay <subcommand> ...
 ```
 
 ## Workflow
@@ -25,7 +25,7 @@ uv --directory "$CLAUDE_PLUGIN_ROOT" run inline-relay <subcommand> ...
 1. **Find threads.** Run `get-threads` with the path argument (a file or
    directory). If no path was given, use `.`:
    ```bash
-   uv --directory "$CLAUDE_PLUGIN_ROOT" run inline-relay get-threads "$PATH"
+   uv run --project "$CLAUDE_PLUGIN_ROOT" inline-relay get-threads "$PATH"
    ```
    Parse the JSON. Each thread has an `id`, `status`, and possibly an
    `action_required`.

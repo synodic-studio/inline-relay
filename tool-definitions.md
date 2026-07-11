@@ -4,10 +4,12 @@ The `inline-relay` CLI does all deterministic thread parsing and marker
 manipulation. Each subcommand prints a JSON result to stdout and exits non-zero
 when the result reports a failure (an `error` key, or `success` false).
 
-Invoke it from the plugin root:
+Invoke it with `--project` so the plugin is selected without changing the
+working directory — relative paths then resolve against the project you're
+reviewing, not the plugin:
 
 ```bash
-uv --directory "$CLAUDE_PLUGIN_ROOT" run inline-relay <subcommand> ...
+uv run --project "$CLAUDE_PLUGIN_ROOT" inline-relay <subcommand> ...
 ```
 
 (For local development in this repo: `uv run inline-relay <subcommand>`.)
