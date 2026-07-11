@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# pi (litellm subagent) local state
+.pi/
