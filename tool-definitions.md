@@ -1,87 +1,91 @@
-# inline-relay MCP Server - Tool Definitions
+# inline-relay CLI Reference
 
-## `get_threads`
+The `inline-relay` CLI does all deterministic thread parsing and marker
+manipulation. Each subcommand prints a JSON result to stdout and exits non-zero
+when the result reports a failure (an `error` key, or `success` false).
 
-Find all AUTHOR/AGENT threads in the codebase.
+Invoke it from the plugin root:
 
-### Parameters
+```bash
+uv --directory "$CLAUDE_PLUGIN_ROOT" run inline-relay <subcommand> ...
+```
 
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `path` | string | No | Directory or file to search. Defaults to cwd. |
+(For local development in this repo: `uv run inline-relay <subcommand>`.)
 
-### Returns
+---
+
+## `get-threads [PATH]`
+
+Find all AUTHOR/AGENT threads under `PATH` (a file or directory; default `.`).
+
+Normalizes inline AUTHOR comments to their own line, auto-salts duplicate
+thread IDs, and reports threads elsewhere in the repo (read-only).
 
 ```json
 {
   "threads": [
     {
-      "id": "a1b2c3",
+      "id": "e4af2648",
       "file": "Sources/App/NetworkManager.swift",
       "start_line": 47,
       "thread": [
         {"role": "author", "line": 47, "text": "should we rename this to loadData?"},
-        {"role": "agent", "line": 48, "text": "Renamed. Better reflects async nature."},
-        {"role": "author", "line": 49, "text": ""}
+        {"role": "agent", "line": 48, "text": "Renamed. Better reflects async nature."}
       ],
-      "status": "awaiting_user"
+      "status": "awaiting_author"
     }
   ],
-  "summary": {"total": 5, "pending": 2, "awaiting_user": 3}
+  "summary": {"total": 1, "awaiting_agent": 0, "awaiting_author": 1}
 }
 ```
 
-### Notes
-
-- `id` is hash of file path + first AUTHOR text (stable even if lines shift)
-- `status`: `pending` = has unprocessed AUTHOR text, `awaiting_user` = ends with blank AUTHOR line
-- Thread detection: consecutive AUTHOR/AGENT lines = one thread. Code between = separate threads.
-- If parsing fails: returns `{"parse_error": true, "file": "...", "raw_content": "..."}` so LLM can fall back to reading the file manually
+Notes:
+- `id` is `SHA256(file_path + first_author_text)[:8]` — stable across line drift.
+- `status`: `awaiting_agent` (last AUTHOR has text) or `awaiting_author` (ends with a blank AUTHOR placeholder).
+- A thread carrying a termination command (`done`/`reset`/`commit`) gets an `action_required` field.
+- If parsing fails, returns `{"parse_error": true, "file": "...", "raw_content": "..."}`.
 
 ---
 
-## `respond_to_thread`
+## `respond --id ID [--path PATH] [--response-file FILE]`
 
-Add an AGENT response to a thread. Enforces formatting mechanically.
+Add an AGENT response to a thread. Locates the thread by content hash (survives
+line drift), appends the AGENT line with the file's native comment prefix and
+indentation, and adds a trailing empty AUTHOR placeholder.
 
-### Parameters
-
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `thread_id` | string | Yes | ID from `get_threads` |
-| `response` | string | Yes | The response text (without `// AGENT:` prefix) |
-| `path` | string | No | Directory or file to search. Use same path as `get_threads`. |
-
-### Returns
+The response text comes from `--response-file FILE` (recommended) or, if the
+flag is omitted, from **stdin**. Never pass it as a shell argument — a normal
+review reply contains quotes, `$`, `|`, or backticks that would break or inject.
+The text is treated as a single-line comment; a trailing newline is stripped.
 
 ```json
-{
-  "success": true,
-  "file": "Sources/App/NetworkManager.swift"
-}
+{"success": true, "file": "Sources/App/NetworkManager.swift"}
 ```
 
-### Behavior
-
-1. Locates thread by content hash (not line number - handles shifts from edits above)
-2. Normalizes existing formatting if needed (moves inline markers to own line, removes indentation)
-3. Appends `// AGENT: {response}` on own line, no indentation
-4. Adds blank `// AUTHOR: ` line after
+Behavior:
+- Blocks a response identical to the previous AGENT line (`Duplicate response blocked`).
+- A *different* response to a thread awaiting the author is appended to the existing AGENT line (`"appended": true`).
+- Future-tense phrasing ("I will fix…") adds a `warning` — do the work first and respond in past tense.
 
 ---
 
-## `clear_and_commit`
+## `dismiss --id ID [--path PATH]`
 
-Clear ALL thread markers from a file and commit that file only.
+Remove a single thread's markers without committing. Permitted only when the
+thread carries a dismiss action (AUTHOR wrote `done` or `reset`). Other threads
+in the same file are preserved.
 
-### Parameters
+```json
+{"success": true, "file": "Sources/App/NetworkManager.swift", "lines_removed": 4}
+```
 
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `file` | string | Yes | Path to the file |
-| `message` | string | No | Commit message. Auto-generates if not provided. |
+---
 
-### Returns
+## `clear-commit --file FILE [--message MSG]`
+
+Remove ALL AUTHOR/AGENT markers from `FILE`, stage only that file, and commit
+it. Other staged files remain staged but are not committed. Message
+auto-generates if omitted.
 
 ```json
 {
@@ -93,39 +97,21 @@ Clear ALL thread markers from a file and commit that file only.
 }
 ```
 
-### Behavior
-
-1. Removes ALL `// AUTHOR:` and `// AGENT:` lines from the file
-2. Stages only this file
-3. Commits with message
-4. Other staged files remain staged (not committed)
-
 ---
 
-## `dismiss_thread`
+## `process-all [PATH]`
 
-Remove a single thread without committing.
-
-### Parameters
-
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `thread_id` | string | Yes | ID from `get_threads` |
-| `path` | string | No | Directory or file to search. Use same path as `get_threads`. |
-
-### Returns
+Execute every pending termination command under `PATH` in one pass. Commits run
+before dismissals; if a file has both, the commit takes priority (it clears
+everything).
 
 ```json
 {
   "success": true,
-  "file": "Sources/App/NetworkManager.swift",
-  "lines_removed": 4
+  "actions_executed": 2,
+  "results": [
+    {"action": "clear_and_commit", "file": "a.swift", "lines_removed": 3, "commit_hash": "abc1234"},
+    {"action": "dismiss_thread", "thread_id": "e4af2648", "file": "b.swift", "lines_removed": 4}
+  ]
 }
 ```
-
-### Behavior
-
-- Removes AUTHOR/AGENT lines for this thread only
-- Does NOT commit
-- File remains modified in working directory
-- Other threads in same file are preserved

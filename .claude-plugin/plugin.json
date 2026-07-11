@@ -1,9 +1,8 @@
 {
   "name": "inline-relay",
-  "description": "AUTHOR/AGENT inline code review threads - MCP tools and edit guards",
+  "description": "AUTHOR/AGENT inline code review threads - skill, CLI, and edit guards",
   "author": {
     "name": "Adrien Lipari",
     "email": "adrien@synodic.co"
-  },
-  "mcpServers": "./.mcp.json"
+  }
 }

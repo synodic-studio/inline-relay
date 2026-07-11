@@ -31,8 +31,8 @@ The trailing empty comment is a cursor for your next reply. When you write text 
 
 - **One command:** `/inline-relay:process` scans for threads in a path and works through them until none are awaiting the agent.
 - **One skill** that loads contextually when threads are involved and gives the agent behavioral guidance.
-- **MCP server** with four tools: `get_threads`, `respond_to_thread`, `dismiss_thread`, `clear_and_commit`.
-- **Pre-tool-use hooks** that block normal Edit/Write calls from accidentally trampling thread markers. The MCP server has exclusive write access.
+- **A CLI** (`inline-relay`) with five subcommands — `get-threads`, `respond`, `dismiss`, `clear-commit`, `process-all` — that does all the deterministic thread parsing and marker manipulation. The skill drives it via Bash; no server process required.
+- **Pre-tool-use hooks** that block normal Edit/Write calls from accidentally trampling thread markers. Marker changes go exclusively through the CLI.
 
 ## Install
 

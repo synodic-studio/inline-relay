@@ -2,12 +2,53 @@
 description: >
   Use this skill when working with AUTHOR/AGENT inline code review threads.
   Triggers on: "inline dialogue", "AUTHOR/AGENT threads", "code review threads",
-  "process threads", thread-related MCP tool usage.
+  "process threads", running the inline-relay CLI.
 ---
 
 # Inline Dialogue Workflow
 
 Behavioral guidance for processing AUTHOR/AGENT inline code review threads.
+
+## Running the CLI
+
+All thread operations go through the `inline-relay` CLI. It prints JSON to
+stdout and exits non-zero on failure. Invoke it from the plugin root:
+
+```bash
+IR="uv --directory \"$CLAUDE_PLUGIN_ROOT\" run inline-relay"
+
+# Find all threads under a path (default ".")
+$IR get-threads path/to/scan
+
+# Remove a finished thread (only when AUTHOR wrote done/reset)
+$IR dismiss --id THREAD_ID --path path/to/scan
+
+# Clear a file's markers and commit that file
+$IR clear-commit --file path/to/file.swift --message "optional message"
+
+# Execute every pending done/reset/commit action in one pass
+$IR process-all path/to/scan
+```
+
+**Responding is the one that needs care.** Never pass the response as a shell
+argument — quotes, `$`, `|`, and backticks in a normal review reply will break
+or inject. Instead, write the response to a temp file with the Write tool, then
+pass it with `--response-file`:
+
+```bash
+# 1. Write the response text to a scratch file (Write tool), then:
+$IR respond --id THREAD_ID --path path/to/scan --response-file /tmp/reply.txt
+```
+
+The response text is a single-line comment; keep it to one line. Reading the
+JSON back tells you `success`, plus any `warning` (e.g. future-tense language)
+or `appended` note.
+
+## Never edit markers with Edit/Write
+
+`respond`, `dismiss`, `clear-commit`, and `process-all` are the ONLY ways to
+add or remove `// AUTHOR:` / `// AGENT:` lines. The pre-tool-use hook blocks
+Edit/Write that touch marker lines. Use Edit freely for the surrounding code.
 
 ## Act First, Then Report
 
@@ -50,10 +91,11 @@ For truly large changes (many files, significant line count), consider offering 
 ## Termination Commands
 
 When AUTHOR writes exactly `done`, `reset`, `commit`, or `commit file`:
-- These have `action_required` in the thread data
+- These have `action_required` in the `get-threads` output
 - Execute the action immediately (no response needed)
-- `done`/`reset` → `dismiss_thread(thread_id, path)`
-- `commit`/`commit file` → `clear_and_commit(thread_id, path, message)`
+- `done`/`reset` → `dismiss --id THREAD_ID --path PATH`
+- `commit`/`commit file` → `clear-commit --file FILE`
+- Or handle every pending action in one call with `process-all PATH`
 
 ## What IS and ISN'T Blocked
 
@@ -65,7 +107,7 @@ Thread markers do NOT block edits to surrounding code. Only edits that touch the
 - Refactor code in the same file as threads
 
 **You CANNOT:**
-- Edit or delete `// AUTHOR:` or `// AGENT:` lines directly (use MCP tools instead)
+- Edit or delete `// AUTHOR:` or `// AGENT:` lines directly (use the inline-relay CLI instead)
 - Use Write tool on files containing threads (use Edit tool)
 
 If you think "threads are blocking my edits" - you're wrong. Make the code changes, then respond.
@@ -99,13 +141,13 @@ The thread stays in place. After the author dismisses it, it disappears.
 
 1. **Use Edit tool for code changes** - Write could destroy thread markers
 2. **Treat thread markers as read-only** - Never edit existing `// AUTHOR:` or `// AGENT:` lines
-3. **Only use respond_to_thread for responses** - It appends, never replaces
+3. **Only use the `respond` command for responses** - It appends, never replaces
 4. **Preserve full thread history** - The author uses this to follow the conversation; never condense or rewrite previous exchanges
 5. **Edit surgically** - When making code changes near a thread, work around it
 
 ## Verification Before Response
 
-Before calling `respond_to_thread`:
+Before running the `respond` command:
 
 1. **Confirm the change exists** - File is saved, code is present
 2. **Be specific** - Reference line numbers, function names, file paths

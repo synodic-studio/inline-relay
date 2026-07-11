@@ -1,1 +1,1 @@
-"""Tests for inline-relay MCP server."""
+"""Tests for inline-relay."""

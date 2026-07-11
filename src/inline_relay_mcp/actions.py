@@ -1,10 +1,14 @@
-"""inline-relay MCP server for managing AUTHOR/AGENT code review threads."""
+"""Thread operations for inline-relay.
+
+These are plain, synchronous functions operating on files, git, and the
+SQLite event log. They contain all the logic that the CLI (and previously the
+MCP server) exposes. Nothing here depends on a running server or an MCP
+context -- paths are resolved against the current working directory.
+"""
 
 import re
 import subprocess
 from pathlib import Path
-
-from fastmcp import Context, FastMCP
 
 from .core import (
     AGENT_PATTERN,
@@ -19,43 +23,23 @@ from .core import (
     salt_duplicate_threads,
 )
 
-mcp = FastMCP("inline-relay")
 
-
-async def resolve_path(path: str, ctx: Context) -> Path:
-    """Resolve path against client's root if relative."""
+def resolve_path(path: str) -> Path:
+    """Resolve a path against the current working directory if relative."""
     search_path = Path(path)
-    if not search_path.is_absolute():
-        try:
-            roots = await ctx.list_roots()
-            if roots:
-                base = str(roots[0].uri).replace("file://", "")
-                search_path = Path(base) / path
-        except Exception:
-            pass
     if not search_path.is_absolute():
         search_path = search_path.resolve()
     return search_path
 
 
-@mcp.tool()
-async def get_threads(path: str, ctx: Context) -> dict:
-    """Find all AUTHOR/AGENT threads in the codebase.
+def get_threads(path: str) -> dict:
+    """Find all AUTHOR/AGENT threads under a path.
 
-    CRITICAL: Threads are READ-ONLY in the file. Never edit thread markers
-    directly. Use respond_to_thread to add responses. Use Edit tool only
-    for code changes, preserving all thread markers exactly.
-
-    If a thread has `action_required`, execute that action immediately
-    without calling respond_to_thread.
-
-    Args:
-        path: Path to directory or file to search. Use "." for current project.
-
-    Returns:
-        Dictionary with threads list and summary counts.
+    Normalizes inline AUTHOR comments, auto-salts duplicate thread IDs, and
+    reports threads elsewhere in the repo (read-only) so callers know to scan
+    wider if needed.
     """
-    search_path = await resolve_path(path, ctx)
+    search_path = resolve_path(path)
     if not search_path.exists():
         return {"error": f"Path not found: {path}"}
 
@@ -130,7 +114,7 @@ async def get_threads(path: str, ctx: Context) -> dict:
                     "by_directory": other_dirs,
                     "note": f"{len(other_threads)} other thread(s) exist elsewhere in repo ({dir_summary}). "
                             f"{other_awaiting_agent} awaiting agent response. "
-                            "Run get_threads on repo root to see all.",
+                            "Run get-threads on repo root to see all.",
                 }
         except Exception:
             pass  # Silently skip if repo-wide scan fails
@@ -138,23 +122,16 @@ async def get_threads(path: str, ctx: Context) -> dict:
     return result
 
 
-@mcp.tool()
-async def respond_to_thread(thread_id: str, response: str, path: str, ctx: Context) -> dict:
-    """Add an AGENT response to a thread. Enforces formatting mechanically.
+def respond_to_thread(thread_id: str, response: str, path: str) -> dict:
+    """Add an AGENT response to a thread, enforcing formatting mechanically.
 
-    This is the ONLY way to add AGENT responses. NEVER use Edit tool to add
-    // AGENT: lines - it will corrupt thread formatting. This tool appends
-    correctly and adds the trailing // AUTHOR: placeholder.
-
-    Args:
-        thread_id: ID from get_threads.
-        response: The response text (without // AGENT: prefix).
-        path: Directory or file to search for the thread. Use "." for current project.
-
-    Returns:
-        Success status and file modified.
+    Locates the thread by content hash (survives line drift), appends the
+    AGENT line with the file's native comment prefix and indentation, and adds
+    the trailing empty AUTHOR placeholder. Blocks identical duplicate
+    responses; when a thread awaiting the author gets a *different* response it
+    is appended to the existing AGENT line rather than duplicated.
     """
-    search_path = await resolve_path(path, ctx)
+    search_path = resolve_path(path)
     thread = find_thread_by_id(search_path, thread_id)
     if thread is None:
         return {"success": False, "error": f"Thread not found: {thread_id}"}
@@ -272,19 +249,11 @@ async def respond_to_thread(thread_id: str, response: str, path: str, ctx: Conte
     return result
 
 
-@mcp.tool()
 def clear_and_commit(file: str, message: str = "") -> dict:
     """Clear ALL thread markers from a file and commit that file only.
 
-    Only call when action_required says "commit" or "commit file".
-    Removes all // AUTHOR: and // AGENT: lines permanently, then commits.
-
-    Args:
-        file: Path to the file.
-        message: Commit message. Auto-generates if not provided.
-
-    Returns:
-        Success status, lines removed, commit hash, and other staged files.
+    Removes every AUTHOR/AGENT line, stages only this file, and commits it.
+    Other staged files remain staged but are not committed.
     """
     file_path = Path(file).resolve()
     if not file_path.exists():
@@ -370,21 +339,13 @@ def clear_and_commit(file: str, message: str = "") -> dict:
     }
 
 
-@mcp.tool()
-async def dismiss_thread(thread_id: str, path: str, ctx: Context) -> dict:
-    """Remove a single thread without committing.
+def dismiss_thread(thread_id: str, path: str) -> dict:
+    """Remove a single thread's markers without committing.
 
-    Only call when action_required says "done" or "reset".
-    Permanently removes the thread markers from the file.
-
-    Args:
-        thread_id: ID from get_threads.
-        path: Directory or file to search for the thread. Use "." for current project.
-
-    Returns:
-        Success status, file modified, and lines removed.
+    Only permitted when the thread carries a dismiss action (AUTHOR wrote
+    'done' or 'reset'). Other threads in the same file are preserved.
     """
-    search_path = await resolve_path(path, ctx)
+    search_path = resolve_path(path)
     thread = find_thread_by_id(search_path, thread_id)
     if thread is None:
         return {"success": False, "error": f"Thread not found: {thread_id}"}
@@ -454,25 +415,13 @@ async def dismiss_thread(thread_id: str, path: str, ctx: Context) -> dict:
     }
 
 
-@mcp.tool()
-async def process_all_actions(path: str, ctx: Context) -> dict:
-    """Execute all pending termination commands (done/reset/commit) in one call.
-
-    Scans for threads where AUTHOR wrote a termination command and executes
-    each action automatically:
-    - done/reset: thread markers removed (same as dismiss_thread)
-    - commit/commit file: all markers cleared and file committed (same as clear_and_commit)
+def process_all_actions(path: str) -> dict:
+    """Execute all pending termination commands (done/reset/commit) in one pass.
 
     Commits are executed before dismissals. If a file has both commit and
     dismiss actions, the commit takes priority (it clears everything).
-
-    Args:
-        path: Path to directory or file to search. Use "." for current project.
-
-    Returns:
-        Summary of actions executed with per-action results.
     """
-    search_path = await resolve_path(path, ctx)
+    search_path = resolve_path(path)
     if not search_path.exists():
         return {"error": f"Path not found: {path}"}
 
@@ -510,7 +459,7 @@ async def process_all_actions(path: str, ctx: Context) -> dict:
 
     # Execute commits first (clear_and_commit handles whole files)
     for file_path_str in commit_files:
-        result = clear_and_commit.fn(file_path_str)
+        result = clear_and_commit(file_path_str)
         if result.get("success"):
             results.append({
                 "action": "clear_and_commit",
@@ -527,7 +476,7 @@ async def process_all_actions(path: str, ctx: Context) -> dict:
 
     # Execute dismissals (re-finds thread each time since file may have changed)
     for thread in dismiss_threads:
-        result = await dismiss_thread.fn(thread["id"], path, ctx)
+        result = dismiss_thread(thread["id"], path)
         if result.get("success"):
             results.append({
                 "action": "dismiss_thread",
@@ -553,7 +502,3 @@ async def process_all_actions(path: str, ctx: Context) -> dict:
         summary["errors"] = errors
 
     return summary
-
-
-if __name__ == "__main__":
-    mcp.run()

@@ -4,24 +4,30 @@ Project-specific guidance for Claude Code working on inline-relay.
 
 ## Project Overview
 
-MCP plugin enabling AUTHOR/AGENT inline code review threads embedded in source code. Python-based with pytest testing, FastMCP server architecture.
+Claude Code plugin enabling AUTHOR/AGENT inline code review threads embedded in source code. Zero-dependency Python (stdlib only) with pytest testing. Thread operations run through a deterministic CLI driven by a skill — no server process.
 
 ## Commands
 
 ```bash
-uv run pytest                    # Run all tests (80 tests)
+uv run pytest                    # Run all tests
 uv run pytest -x                 # Stop on first failure
 uv run pytest -k "test_name"     # Run specific test
-uv run python -m inline_relay_mcp.server  # Run MCP server
+uv run inline-relay get-threads .   # Run the CLI (subcommands: get-threads,
+                                    # respond, dismiss, clear-commit, process-all)
 ```
 
 ## Architecture
 
-- `inline_relay_mcp/core.py` - Thread detection, normalization, ID computation
-- `inline_relay_mcp/server.py` - MCP tool implementations
+- `src/inline_relay_mcp/core.py` - Thread detection, normalization, ID computation, SQLite event log
+- `src/inline_relay_mcp/actions.py` - Thread operations (get/respond/dismiss/clear-commit/process-all) as plain functions
+- `src/inline_relay_mcp/cli.py` + `__main__.py` - argparse CLI wrapping `actions`; prints JSON, exits non-zero on failure
 - `hooks/pre_tool_use.py` - Edit guards protecting thread markers
 - `tests/test_server.py` - All tests (organized by class)
-- `skills/inline-relay-workflow/SKILL.md` - Behavioral guidance for thread processing
+- `commands/process.md` - `/inline-relay:process` entry point
+- `skills/inline-relay-workflow/SKILL.md` - Behavioral guidance + CLI invocation
+
+Note: the `inline_relay_mcp` package name is a historical holdover from the MCP
+era and will be renamed; the tool is a CLI now, not an MCP server.
 
 ## Critical: Verify Before Claiming
 
@@ -99,4 +105,4 @@ class TestNewFeature:
 
 - **Never use Write tool** on files containing thread markers (use Edit)
 - Thread markers (`// AUTHOR:`, `// AGENT:`) are protected by hooks
-- Use MCP tools (`respond_to_thread`, `dismiss_thread`) for thread operations
+- Use the `inline-relay` CLI (`respond`, `dismiss`, `clear-commit`, `process-all`) for thread operations

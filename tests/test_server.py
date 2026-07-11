@@ -1,7 +1,8 @@
-"""Tests for inline-relay MCP server thread handling."""
+"""Tests for inline-relay thread handling (actions + CLI)."""
 
+import io
+import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -26,26 +27,12 @@ from inline_relay_mcp.core import (
     strip_empty_trailing_author,
     uses_slash_comments,
 )
-from inline_relay_mcp.server import (
-    dismiss_thread,
-    get_threads,
-    process_all_actions,
-    respond_to_thread,
+from inline_relay_mcp.actions import (
+    dismiss_thread as _dismiss_thread,
+    get_threads as _get_threads,
+    process_all_actions as _process_all_actions,
+    respond_to_thread as _respond_to_thread,
 )
-
-# Access underlying functions from FunctionTool wrappers
-_get_threads = get_threads.fn
-_respond_to_thread = respond_to_thread.fn
-_dismiss_thread = dismiss_thread.fn
-_process_all_actions = process_all_actions.fn
-
-
-@pytest.fixture
-def mock_ctx():
-    """Create a mock Context that returns no roots (uses fallback path resolution)."""
-    ctx = MagicMock()
-    ctx.list_roots = AsyncMock(return_value=[])
-    return ctx
 
 
 class TestComputeThreadId:
@@ -314,7 +301,7 @@ class TestAutoSalting:
         assert threads[0]["id"] != threads[1]["id"]
         assert len(new_warnings) == 0
 
-    async def test_get_threads_auto_salts_duplicates(self, tmp_path, mock_ctx):
+    def test_get_threads_auto_salts_duplicates(self, tmp_path):
         """get_threads automatically salts duplicates and reports modified files."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
@@ -324,7 +311,7 @@ class TestAutoSalting:
             "def bar(): pass\n"
         )
 
-        result = await _get_threads(str(test_file), mock_ctx)
+        result = _get_threads(str(test_file))
 
         # Should have salted_files, not warnings
         assert "salted_files" in result
@@ -335,13 +322,13 @@ class TestAutoSalting:
         assert len(result["threads"]) == 2
         assert result["threads"][0]["id"] != result["threads"][1]["id"]
 
-    async def test_get_threads_no_salting_when_unique(self, tmp_path, mock_ctx):
+    def test_get_threads_no_salting_when_unique(self, tmp_path):
         """get_threads doesn't modify file when threads are unique."""
         test_file = tmp_path / "test.py"
         original_content = "// AUTHOR: Unique text\ndef foo(): pass\n"
         test_file.write_text(original_content)
 
-        result = await _get_threads(str(test_file), mock_ctx)
+        result = _get_threads(str(test_file))
 
         assert "salted_files" not in result
         assert "warnings" not in result
@@ -365,7 +352,7 @@ class TestAutoSalting:
 class TestLineDrift:
     """Tests for thread operations surviving line number changes."""
 
-    async def test_reply_after_lines_added_above(self, tmp_path, mock_ctx):
+    def test_reply_after_lines_added_above(self, tmp_path):
         """Reply succeeds after lines inserted above thread."""
         test_file = tmp_path / "test.py"
         original_content = (
@@ -404,7 +391,7 @@ class TestLineDrift:
         assert threads_after[0]["id"] == thread_id  # Same ID
 
         # Reply should still work via content-based location
-        result = await _respond_to_thread(thread_id, "This looks fine", str(test_file), mock_ctx)
+        result = _respond_to_thread(thread_id, "This looks fine", str(test_file))
 
         assert result["success"] is True
 
@@ -413,7 +400,7 @@ class TestLineDrift:
         assert "// AGENT: This looks fine" in final_content
         assert "// AUTHOR: " in final_content  # Blank author line added
 
-    async def test_reply_after_lines_removed_above(self, tmp_path, mock_ctx):
+    def test_reply_after_lines_removed_above(self, tmp_path):
         """Reply succeeds after lines removed above thread."""
         test_file = tmp_path / "test.py"
         original_content = (
@@ -448,7 +435,7 @@ class TestLineDrift:
         assert threads_after[0]["start_line"] == 3  # Line shifted
 
         # Reply should still work
-        result = await _respond_to_thread(thread_id, "Still works", str(test_file), mock_ctx)
+        result = _respond_to_thread(thread_id, "Still works", str(test_file))
         assert result["success"] is True
 
     def test_thread_id_stable_across_modifications(self, tmp_path):
@@ -499,7 +486,7 @@ class TestFindThreadLocation:
 class TestRespondToThread:
     """Tests for adding responses to threads."""
 
-    async def test_basic_response(self, tmp_path, mock_ctx):
+    def test_basic_response(self, tmp_path):
         """Adds AGENT response and blank AUTHOR line."""
         test_file = tmp_path / "test.py"
         test_file.write_text("// AUTHOR: Question?\ndef foo(): pass\n")
@@ -507,7 +494,7 @@ class TestRespondToThread:
         threads, _ = find_all_threads(test_file)
         thread_id = threads[0]["id"]
 
-        result = await _respond_to_thread(thread_id, "Answer!", str(test_file), mock_ctx)
+        result = _respond_to_thread(thread_id, "Answer!", str(test_file))
 
         assert result["success"] is True
         content = test_file.read_text()
@@ -517,7 +504,7 @@ class TestRespondToThread:
         assert lines[2] == "// AUTHOR: "
         assert lines[3] == "def foo(): pass"
 
-    async def test_response_preserves_indentation(self, tmp_path, mock_ctx):
+    def test_response_preserves_indentation(self, tmp_path):
         """Response preserves thread's existing indentation."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("func foo() {\n    // AUTHOR: Question?\n}\n")
@@ -525,7 +512,7 @@ class TestRespondToThread:
         threads, _ = find_all_threads(test_file)
         thread_id = threads[0]["id"]
 
-        result = await _respond_to_thread(thread_id, "Answer!", str(test_file), mock_ctx)
+        result = _respond_to_thread(thread_id, "Answer!", str(test_file))
 
         assert result["success"] is True
         content = test_file.read_text()
@@ -534,17 +521,17 @@ class TestRespondToThread:
         assert lines[2] == "    // AGENT: Answer!"
         assert lines[3] == "    // AUTHOR: "
 
-    async def test_response_to_nonexistent_thread(self, tmp_path, mock_ctx):
+    def test_response_to_nonexistent_thread(self, tmp_path):
         """Returns error for missing thread ID."""
         test_file = tmp_path / "test.py"
         test_file.write_text("def foo(): pass\n")
 
-        result = await _respond_to_thread("nonexistent", "Response", str(test_file), mock_ctx)
+        result = _respond_to_thread("nonexistent", "Response", str(test_file))
 
         assert result["success"] is False
         assert "not found" in result["error"]
 
-    async def test_blocks_identical_duplicate_response(self, tmp_path, mock_ctx):
+    def test_blocks_identical_duplicate_response(self, tmp_path):
         """Blocks identical duplicate response."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
@@ -558,7 +545,7 @@ class TestRespondToThread:
         thread_id = threads[0]["id"]
 
         # Attempting identical response should fail
-        result = await _respond_to_thread(thread_id, "First answer", str(test_file), mock_ctx)
+        result = _respond_to_thread(thread_id, "First answer", str(test_file))
 
         assert result["success"] is False
         assert "Duplicate response blocked" in result["error"]
@@ -567,7 +554,7 @@ class TestRespondToThread:
         content = test_file.read_text()
         assert content.count("// AGENT:") == 1
 
-    async def test_appends_to_existing_agent_response(self, tmp_path, mock_ctx):
+    def test_appends_to_existing_agent_response(self, tmp_path):
         """Appends to existing AGENT line when thread is awaiting user."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
@@ -581,7 +568,7 @@ class TestRespondToThread:
         thread_id = threads[0]["id"]
 
         # Different response should append to existing AGENT line
-        result = await _respond_to_thread(thread_id, "Additional clarification", str(test_file), mock_ctx)
+        result = _respond_to_thread(thread_id, "Additional clarification", str(test_file))
 
         assert result["success"] is True
         assert result.get("appended") is True
@@ -592,7 +579,7 @@ class TestRespondToThread:
         assert content.count("// AGENT:") == 1
         assert "First answer | Additional clarification" in content
 
-    async def test_response_preserves_multiline_thread(self, tmp_path, mock_ctx):
+    def test_response_preserves_multiline_thread(self, tmp_path):
         """Response appends to existing multi-line thread."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
@@ -605,7 +592,7 @@ class TestRespondToThread:
         threads, _ = find_all_threads(test_file)
         thread_id = threads[0]["id"]
 
-        result = await _respond_to_thread(thread_id, "Follow up answer", str(test_file), mock_ctx)
+        result = _respond_to_thread(thread_id, "Follow up answer", str(test_file))
 
         assert result["success"] is True
         content = test_file.read_text()
@@ -616,7 +603,7 @@ class TestRespondToThread:
 class TestResponseWarnings:
     """Tests for response quality warnings (future-tense, vague claims)."""
 
-    async def test_future_tense_warning(self, tmp_path, mock_ctx):
+    def test_future_tense_warning(self, tmp_path):
         """Warns about future-tense language in responses."""
         test_file = tmp_path / "test.py"
         test_file.write_text("// AUTHOR: Fix this bug\ndef foo(): pass\n")
@@ -624,15 +611,15 @@ class TestResponseWarnings:
         threads, _ = find_all_threads(test_file)
         thread_id = threads[0]["id"]
 
-        result = await _respond_to_thread(
-            thread_id, "I will fix the bug", str(test_file), mock_ctx
+        result = _respond_to_thread(
+            thread_id, "I will fix the bug", str(test_file)
         )
 
         assert result["success"] is True
         assert "warning" in result
         assert "future-tense" in result["warning"]
 
-    async def test_specific_response_no_warning(self, tmp_path, mock_ctx):
+    def test_specific_response_no_warning(self, tmp_path):
         """No warning for specific, past-tense response."""
         test_file = tmp_path / "test.py"
         test_file.write_text("// AUTHOR: Fix this bug\ndef foo(): pass\n")
@@ -640,8 +627,8 @@ class TestResponseWarnings:
         threads, _ = find_all_threads(test_file)
         thread_id = threads[0]["id"]
 
-        result = await _respond_to_thread(
-            thread_id, "Fixed null check at line 42 in processData()", str(test_file), mock_ctx
+        result = _respond_to_thread(
+            thread_id, "Fixed null check at line 42 in processData()", str(test_file)
         )
 
         assert result["success"] is True
@@ -862,40 +849,40 @@ class TestNormalizeAllInlineComments:
 class TestGetThreadsWithInlineComments:
     """Tests for get_threads with inline comment normalization."""
 
-    async def test_get_threads_normalizes_inline_swift(self, tmp_path, mock_ctx):
+    def test_get_threads_normalizes_inline_swift(self, tmp_path):
         """get_threads normalizes inline comments in Swift files."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("let x = 5 // AUTHOR: Is this ok?\n")
 
-        result = await _get_threads(str(test_file), mock_ctx)
+        result = _get_threads(str(test_file))
 
         assert "normalized_files" in result
         assert len(result["normalized_files"]) == 1
         assert len(result["threads"]) == 1
         assert result["threads"][0]["thread"][0]["text"] == "Is this ok?"
 
-    async def test_get_threads_skips_python(self, tmp_path, mock_ctx):
+    def test_get_threads_skips_python(self, tmp_path):
         """get_threads does not normalize Python files."""
         test_file = tmp_path / "test.py"
         # This has // AUTHOR: in a string - should NOT be normalized
         test_file.write_text('print("// AUTHOR: not real")\n')
 
-        result = await _get_threads(str(test_file), mock_ctx)
+        result = _get_threads(str(test_file))
 
         assert "normalized_files" not in result
         assert len(result["threads"]) == 0
 
-    async def test_get_threads_no_normalization_needed(self, tmp_path, mock_ctx):
+    def test_get_threads_no_normalization_needed(self, tmp_path):
         """get_threads doesn't report normalized_files when none needed."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: Already standalone\nlet x = 5\n")
 
-        result = await _get_threads(str(test_file), mock_ctx)
+        result = _get_threads(str(test_file))
 
         assert "normalized_files" not in result
         assert len(result["threads"]) == 1
 
-    async def test_normalized_thread_is_found(self, tmp_path, mock_ctx):
+    def test_normalized_thread_is_found(self, tmp_path):
         """After normalization, thread is properly detected."""
         test_file = tmp_path / "test.swift"
         test_file.write_text(
@@ -903,23 +890,23 @@ class TestGetThreadsWithInlineComments:
             "// AUTHOR: can't these be computed props?\n"
         )
 
-        result = await _get_threads(str(test_file), mock_ctx)
+        result = _get_threads(str(test_file))
 
         assert result["summary"]["total"] == 1
         thread = result["threads"][0]
         assert thread["thread"][0]["text"] == "can't these be computed props?"
 
-    async def test_reply_to_normalized_thread(self, tmp_path, mock_ctx):
+    def test_reply_to_normalized_thread(self, tmp_path):
         """Can reply to a thread that was normalized from inline."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("code() // AUTHOR: question\n")
 
         # Get threads (will normalize)
-        result = await _get_threads(str(test_file), mock_ctx)
+        result = _get_threads(str(test_file))
         thread_id = result["threads"][0]["id"]
 
         # Reply
-        reply_result = await _respond_to_thread(thread_id, "Answer!", str(test_file), mock_ctx)
+        reply_result = _respond_to_thread(thread_id, "Answer!", str(test_file))
 
         assert reply_result["success"] is True
         content = test_file.read_text()
@@ -950,21 +937,21 @@ class TestFindGitRoot:
 class TestOtherThreadsNotification:
     """Tests for other_threads notification in get_threads."""
 
-    async def test_no_other_threads_field_without_git(self, tmp_path, mock_ctx):
+    def test_no_other_threads_field_without_git(self, tmp_path):
         """No other_threads field when not in a git repo."""
         test_file = tmp_path / "test.py"
         test_file.write_text("// AUTHOR: Question?\ndef foo(): pass\n")
 
-        result = await _get_threads(str(tmp_path), mock_ctx)
+        result = _get_threads(str(tmp_path))
 
         assert "other_threads" not in result
 
-    async def test_no_other_threads_when_scanning_root(self, mock_ctx):
+    def test_no_other_threads_when_scanning_root(self):
         """No other_threads when scanning entire repo root."""
         # Use actual project directory (the repo root)
         project_dir = Path(__file__).parent.parent
 
-        result = await _get_threads(str(project_dir), mock_ctx)
+        result = _get_threads(str(project_dir))
 
         # When scanning root, there shouldn't be "other" threads
         assert "other_threads" not in result
@@ -973,12 +960,12 @@ class TestOtherThreadsNotification:
 class TestActionCommandDetection:
     """Tests for action_required field when AUTHOR uses command patterns."""
 
-    async def test_done_command_detected(self, tmp_path, mock_ctx):
+    def test_done_command_detected(self, tmp_path):
         """'done' triggers action_required with dismiss_thread."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: done\nfunc foo() {}\n")
 
-        result = await _get_threads(str(test_file), mock_ctx)
+        result = _get_threads(str(test_file))
 
         assert len(result["threads"]) == 1
         thread = result["threads"][0]
@@ -986,87 +973,87 @@ class TestActionCommandDetection:
         assert thread["action_required"]["action"] == "dismiss_thread"
         assert "COMMAND detected" in thread["action_required"]["note"]
 
-    async def test_commit_command_detected(self, tmp_path, mock_ctx):
+    def test_commit_command_detected(self, tmp_path):
         """'commit' triggers action_required with clear_and_commit."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: commit\nfunc foo() {}\n")
 
-        result = await _get_threads(str(test_file), mock_ctx)
+        result = _get_threads(str(test_file))
 
         thread = result["threads"][0]
         assert "action_required" in thread
         assert thread["action_required"]["action"] == "clear_and_commit"
 
-    async def test_commit_file_command_detected(self, tmp_path, mock_ctx):
+    def test_commit_file_command_detected(self, tmp_path):
         """'commit file' triggers action_required with clear_and_commit."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: commit file\nfunc foo() {}\n")
 
-        result = await _get_threads(str(test_file), mock_ctx)
+        result = _get_threads(str(test_file))
 
         thread = result["threads"][0]
         assert "action_required" in thread
         assert thread["action_required"]["action"] == "clear_and_commit"
 
-    async def test_reset_command_detected(self, tmp_path, mock_ctx):
+    def test_reset_command_detected(self, tmp_path):
         """'reset' triggers action_required with dismiss_thread."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: reset\nfunc foo() {}\n")
 
-        result = await _get_threads(str(test_file), mock_ctx)
+        result = _get_threads(str(test_file))
 
         thread = result["threads"][0]
         assert "action_required" in thread
         assert thread["action_required"]["action"] == "dismiss_thread"
 
-    async def test_partial_match_not_detected(self, tmp_path, mock_ctx):
+    def test_partial_match_not_detected(self, tmp_path):
         """Partial matches like 'done with refactoring' are NOT commands."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: done with the refactoring\nfunc foo() {}\n")
 
-        result = await _get_threads(str(test_file), mock_ctx)
+        result = _get_threads(str(test_file))
 
         thread = result["threads"][0]
         assert "action_required" not in thread
         assert thread["status"] == "awaiting_agent"
 
-    async def test_commit_in_sentence_not_detected(self, tmp_path, mock_ctx):
+    def test_commit_in_sentence_not_detected(self, tmp_path):
         """'commit to this approach' is NOT a command."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: I want to commit to this approach\nfunc foo() {}\n")
 
-        result = await _get_threads(str(test_file), mock_ctx)
+        result = _get_threads(str(test_file))
 
         thread = result["threads"][0]
         assert "action_required" not in thread
 
-    async def test_case_insensitive_command(self, tmp_path, mock_ctx):
+    def test_case_insensitive_command(self, tmp_path):
         """Commands are case-insensitive."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: DONE\nfunc foo() {}\n")
 
-        result = await _get_threads(str(test_file), mock_ctx)
+        result = _get_threads(str(test_file))
 
         thread = result["threads"][0]
         assert "action_required" in thread
         assert thread["action_required"]["action"] == "dismiss_thread"
 
-    async def test_command_with_whitespace(self, tmp_path, mock_ctx):
+    def test_command_with_whitespace(self, tmp_path):
         """Commands with leading/trailing whitespace still work."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR:   done   \nfunc foo() {}\n")
 
-        result = await _get_threads(str(test_file), mock_ctx)
+        result = _get_threads(str(test_file))
 
         thread = result["threads"][0]
         assert "action_required" in thread
 
-    async def test_no_action_when_awaiting_author(self, tmp_path, mock_ctx):
+    def test_no_action_when_awaiting_author(self, tmp_path):
         """No action_required when thread is awaiting author (empty AUTHOR line)."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: question?\n// AGENT: answer\n// AUTHOR: \nfunc foo() {}\n")
 
-        result = await _get_threads(str(test_file), mock_ctx)
+        result = _get_threads(str(test_file))
 
         thread = result["threads"][0]
         assert "action_required" not in thread
@@ -1076,22 +1063,22 @@ class TestActionCommandDetection:
 class TestProcessAllActions:
     """Tests for process_all_actions batch execution tool."""
 
-    async def test_no_pending_actions(self, tmp_path, mock_ctx):
+    def test_no_pending_actions(self, tmp_path):
         """Returns success with zero actions when no commands pending."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: question?\n// AGENT: answer\n// AUTHOR: \nfunc foo() {}\n")
 
-        result = await _process_all_actions(str(test_file), mock_ctx)
+        result = _process_all_actions(str(test_file))
 
         assert result["success"] is True
         assert result["actions_executed"] == 0
 
-    async def test_dismiss_done_command(self, tmp_path, mock_ctx):
+    def test_dismiss_done_command(self, tmp_path):
         """Dismisses thread when AUTHOR writes 'done'."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: question?\n// AGENT: answer\n// AUTHOR: done\nfunc foo() {}\n")
 
-        result = await _process_all_actions(str(test_file), mock_ctx)
+        result = _process_all_actions(str(test_file))
 
         assert result["success"] is True
         assert result["actions_executed"] == 1
@@ -1102,12 +1089,12 @@ class TestProcessAllActions:
         assert "AGENT" not in content
         assert "func foo()" in content
 
-    async def test_dismiss_reset_command(self, tmp_path, mock_ctx):
+    def test_dismiss_reset_command(self, tmp_path):
         """Dismisses thread when AUTHOR writes 'reset'."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: question?\n// AGENT: answer\n// AUTHOR: reset\nfunc foo() {}\n")
 
-        result = await _process_all_actions(str(test_file), mock_ctx)
+        result = _process_all_actions(str(test_file))
 
         assert result["success"] is True
         assert result["actions_executed"] == 1
@@ -1115,7 +1102,7 @@ class TestProcessAllActions:
         content = test_file.read_text()
         assert "AUTHOR" not in content
 
-    async def test_multiple_dismiss_same_file(self, tmp_path, mock_ctx):
+    def test_multiple_dismiss_same_file(self, tmp_path):
         """Dismisses multiple threads from the same file."""
         test_file = tmp_path / "test.swift"
         test_file.write_text(
@@ -1125,7 +1112,7 @@ class TestProcessAllActions:
             "func bar() {}\n"
         )
 
-        result = await _process_all_actions(str(test_file), mock_ctx)
+        result = _process_all_actions(str(test_file))
 
         assert result["success"] is True
         assert result["actions_executed"] == 2
@@ -1134,7 +1121,7 @@ class TestProcessAllActions:
         assert "func foo()" in content
         assert "func bar()" in content
 
-    async def test_skips_non_command_threads(self, tmp_path, mock_ctx):
+    def test_skips_non_command_threads(self, tmp_path):
         """Leaves threads without termination commands untouched."""
         test_file = tmp_path / "test.swift"
         test_file.write_text(
@@ -1142,7 +1129,7 @@ class TestProcessAllActions:
             "// AUTHOR: question\n// AGENT: answer\n// AUTHOR: done\nfunc bar() {}\n"
         )
 
-        result = await _process_all_actions(str(test_file), mock_ctx)
+        result = _process_all_actions(str(test_file))
 
         assert result["success"] is True
         assert result["actions_executed"] == 1
@@ -1152,30 +1139,30 @@ class TestProcessAllActions:
         # The done thread should be gone
         assert "done" not in content
 
-    async def test_no_threads_at_all(self, tmp_path, mock_ctx):
+    def test_no_threads_at_all(self, tmp_path):
         """Returns success when file has no threads."""
         test_file = tmp_path / "test.swift"
         test_file.write_text("func foo() {}\nfunc bar() {}\n")
 
-        result = await _process_all_actions(str(test_file), mock_ctx)
+        result = _process_all_actions(str(test_file))
 
         assert result["success"] is True
         assert result["actions_executed"] == 0
 
-    async def test_path_not_found(self, tmp_path, mock_ctx):
+    def test_path_not_found(self, tmp_path):
         """Returns error for nonexistent path."""
-        result = await _process_all_actions(str(tmp_path / "nonexistent"), mock_ctx)
+        result = _process_all_actions(str(tmp_path / "nonexistent"))
 
         assert "error" in result
 
-    async def test_directory_scan(self, tmp_path, mock_ctx):
+    def test_directory_scan(self, tmp_path):
         """Processes actions across multiple files in a directory."""
         file1 = tmp_path / "a.swift"
         file1.write_text("// AUTHOR: q1\n// AGENT: a1\n// AUTHOR: done\nfunc a() {}\n")
         file2 = tmp_path / "b.swift"
         file2.write_text("// AUTHOR: q2\n// AGENT: a2\n// AUTHOR: done\nfunc b() {}\n")
 
-        result = await _process_all_actions(str(tmp_path), mock_ctx)
+        result = _process_all_actions(str(tmp_path))
 
         assert result["success"] is True
         assert result["actions_executed"] == 2
@@ -1216,14 +1203,14 @@ class TestPluginDirectoryProtection:
         with pytest.raises(ValueError, match="Refusing to scan plugin directory"):
             find_all_threads(tmp_path)
 
-    async def test_get_threads_returns_error_for_plugin_directory(self, tmp_path, mock_ctx):
+    def test_get_threads_returns_error_for_plugin_directory(self, tmp_path):
         """get_threads returns error dict for plugin directories."""
         # Create plugin structure
         plugin_dir = tmp_path / ".claude-plugin"
         plugin_dir.mkdir()
         (plugin_dir / "plugin.json").write_text('{"name": "test"}')
 
-        result = await _get_threads(str(tmp_path), mock_ctx)
+        result = _get_threads(str(tmp_path))
 
         assert "error" in result
         assert "plugin directory" in result["error"]
@@ -1374,7 +1361,7 @@ class TestHashCommentThreads:
         assert lines[0] == f"{_HASH_AUTHOR} Correct key name?"
         assert lines[1] == "key: value"
 
-    async def test_respond_uses_hash_prefix(self, tmp_path, mock_ctx):
+    def test_respond_uses_hash_prefix(self, tmp_path):
         """respond_to_thread writes hash prefix in Python files."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
@@ -1383,10 +1370,10 @@ class TestHashCommentThreads:
             "    pass\n"
         )
 
-        result = await _get_threads(str(test_file), mock_ctx)
+        result = _get_threads(str(test_file))
         thread_id = result["threads"][0]["id"]
 
-        result = await _respond_to_thread(thread_id, "Fixed it.", str(test_file), mock_ctx)
+        result = _respond_to_thread(thread_id, "Fixed it.", str(test_file))
         assert result["success"] is True
 
         content = test_file.read_text()
@@ -1395,7 +1382,7 @@ class TestHashCommentThreads:
         # Should NOT contain // prefix
         assert "// AGENT:" not in content
 
-    async def test_get_threads_finds_hash_threads(self, tmp_path, mock_ctx):
+    def test_get_threads_finds_hash_threads(self, tmp_path):
         """get_threads finds hash threads in Python files."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
@@ -1403,11 +1390,11 @@ class TestHashCommentThreads:
             "x = 1\n"
         )
 
-        result = await _get_threads(str(test_file), mock_ctx)
+        result = _get_threads(str(test_file))
         assert result["summary"]["total"] == 1
         assert result["summary"]["awaiting_agent"] == 1
 
-    async def test_dismiss_hash_thread(self, tmp_path, mock_ctx):
+    def test_dismiss_hash_thread(self, tmp_path):
         """dismiss_thread removes hash threads."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
@@ -1415,10 +1402,10 @@ class TestHashCommentThreads:
             "x = 1\n"
         )
 
-        result = await _get_threads(str(test_file), mock_ctx)
+        result = _get_threads(str(test_file))
         thread_id = result["threads"][0]["id"]
 
-        result = await _dismiss_thread(thread_id, str(test_file), mock_ctx)
+        result = _dismiss_thread(thread_id, str(test_file))
         assert result["success"] is True
         assert f"{_HASH_AUTHOR} " not in test_file.read_text()
 
@@ -1465,7 +1452,7 @@ class TestDashCommentThreads:
         assert lines[0] == "-- AUTHOR: Too broad?"
         assert lines[1] == "SELECT * FROM users"
 
-    async def test_respond_uses_dash_prefix(self, tmp_path, mock_ctx):
+    def test_respond_uses_dash_prefix(self, tmp_path):
         """respond_to_thread writes -- prefix in SQL files."""
         test_file = tmp_path / "query.sql"
         test_file.write_text(
@@ -1473,10 +1460,10 @@ class TestDashCommentThreads:
             "SELECT * FROM orders;\n"
         )
 
-        result = await _get_threads(str(test_file), mock_ctx)
+        result = _get_threads(str(test_file))
         thread_id = result["threads"][0]["id"]
 
-        result = await _respond_to_thread(thread_id, "Added index.", str(test_file), mock_ctx)
+        result = _respond_to_thread(thread_id, "Added index.", str(test_file))
         assert result["success"] is True
 
         content = test_file.read_text()
@@ -1484,7 +1471,7 @@ class TestDashCommentThreads:
         assert "-- AUTHOR: " in content
         assert "// AGENT:" not in content
 
-    async def test_get_threads_finds_dash_threads(self, tmp_path, mock_ctx):
+    def test_get_threads_finds_dash_threads(self, tmp_path):
         """get_threads finds -- threads in SQL files."""
         test_file = tmp_path / "query.sql"
         test_file.write_text(
@@ -1492,7 +1479,7 @@ class TestDashCommentThreads:
             "SELECT 1;\n"
         )
 
-        result = await _get_threads(str(test_file), mock_ctx)
+        result = _get_threads(str(test_file))
         assert result["summary"]["total"] == 1
         assert result["summary"]["awaiting_agent"] == 1
 
@@ -1500,7 +1487,7 @@ class TestDashCommentThreads:
 class TestMixedSyntaxDirectory:
     """Tests for directories with mixed comment syntax files."""
 
-    async def test_get_threads_mixed_directory(self, tmp_path, mock_ctx):
+    def test_get_threads_mixed_directory(self, tmp_path):
         """get_threads finds threads across different comment syntaxes."""
         swift_file = tmp_path / "app.swift"
         swift_file.write_text("// AUTHOR: Swift question\nlet x = 1\n")
@@ -1511,11 +1498,11 @@ class TestMixedSyntaxDirectory:
         sql_file = tmp_path / "query.sql"
         sql_file.write_text("-- AUTHOR: SQL question\nSELECT 1;\n")
 
-        result = await _get_threads(str(tmp_path), mock_ctx)
+        result = _get_threads(str(tmp_path))
         assert result["summary"]["total"] == 3
         assert result["summary"]["awaiting_agent"] == 3
 
-    async def test_normalize_mixed_directory(self, tmp_path, mock_ctx):
+    def test_normalize_mixed_directory(self, tmp_path):
         """normalize handles mixed syntax inline comments."""
         swift_file = tmp_path / "app.swift"
         swift_file.write_text("let x = 5 // AUTHOR: swift q\n")
@@ -1603,3 +1590,131 @@ class TestInlineAuthorPatternMultiSyntax:
         """Pattern does NOT match standalone -- AUTHOR."""
         match = INLINE_AUTHOR_PATTERN.match("-- AUTHOR: standalone")
         assert match is None
+
+
+class TestCLI:
+    """Tests for the argparse CLI wrapper (JSON output, exit codes, input)."""
+
+    def test_get_threads_prints_json_and_exits_zero(self, tmp_path, capsys):
+        """get-threads prints a JSON result and returns exit code 0."""
+        from inline_relay_mcp.cli import main
+
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("// AUTHOR: Review this?\nlet x = 1\n")
+
+        code = main(["get-threads", str(test_file)])
+        out = json.loads(capsys.readouterr().out)
+
+        assert code == 0
+        assert out["summary"]["total"] == 1
+        assert out["threads"][0]["thread"][0]["text"] == "Review this?"
+
+    def test_get_threads_missing_path_exits_one(self, tmp_path, capsys):
+        """A logical error (missing path) prints JSON and returns exit code 1."""
+        from inline_relay_mcp.cli import main
+
+        code = main(["get-threads", str(tmp_path / "nope")])
+        out = json.loads(capsys.readouterr().out)
+
+        assert code == 1
+        assert "error" in out
+
+    def test_respond_via_response_file(self, tmp_path, capsys):
+        """respond reads response text from --response-file."""
+        from inline_relay_mcp.cli import main
+
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("// AUTHOR: Fix this?\nlet x = 1\n")
+        thread_id = find_all_threads(test_file)[0][0]["id"]
+
+        resp = tmp_path / "resp.txt"
+        # Special characters that would break a shell argv
+        resp.write_text("Fixed via `await`, cost $0, a|b handled.\n")
+
+        code = main(["respond", "--id", thread_id, "--path", str(test_file),
+                     "--response-file", str(resp)])
+        out = json.loads(capsys.readouterr().out)
+
+        assert code == 0
+        assert out["success"] is True
+        content = test_file.read_text()
+        assert "// AGENT: Fixed via `await`, cost $0, a|b handled." in content
+        # Trailing newline from the file must not split the comment
+        assert "// AGENT: Fixed via `await`, cost $0, a|b handled.\n// AUTHOR: " in content
+
+    def test_respond_via_stdin(self, tmp_path, capsys, monkeypatch):
+        """respond reads from stdin when --response-file is omitted."""
+        from inline_relay_mcp.cli import main
+
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("// AUTHOR: Fix this?\nlet x = 1\n")
+        thread_id = find_all_threads(test_file)[0][0]["id"]
+
+        monkeypatch.setattr("sys.stdin", io.StringIO("Fixed it via stdin.\n"))
+
+        code = main(["respond", "--id", thread_id, "--path", str(test_file)])
+        out = json.loads(capsys.readouterr().out)
+
+        assert code == 0
+        assert out["success"] is True
+        assert "// AGENT: Fixed it via stdin." in test_file.read_text()
+
+    def test_respond_no_input_on_tty_errors(self, tmp_path, monkeypatch):
+        """respond with no response and an interactive tty raises SystemExit."""
+        from inline_relay_mcp.cli import main
+
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("// AUTHOR: Fix this?\nlet x = 1\n")
+        thread_id = find_all_threads(test_file)[0][0]["id"]
+
+        class _Tty(io.StringIO):
+            def isatty(self):
+                return True
+
+        monkeypatch.setattr("sys.stdin", _Tty(""))
+
+        with pytest.raises(SystemExit):
+            main(["respond", "--id", thread_id, "--path", str(test_file)])
+
+    def test_dismiss_bad_id_exits_one(self, tmp_path, capsys):
+        """dismiss with an unknown id returns exit code 1."""
+        from inline_relay_mcp.cli import main
+
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("// AUTHOR: Fix this?\nlet x = 1\n")
+
+        code = main(["dismiss", "--id", "nope", "--path", str(test_file)])
+        out = json.loads(capsys.readouterr().out)
+
+        assert code == 1
+        assert out["success"] is False
+
+    def test_clear_commit_missing_file_exits_one(self, tmp_path, capsys):
+        """clear-commit on a missing file returns exit code 1."""
+        from inline_relay_mcp.cli import main
+
+        code = main(["clear-commit", "--file", str(tmp_path / "nope.swift")])
+        out = json.loads(capsys.readouterr().out)
+
+        assert code == 1
+        assert out["success"] is False
+
+    def test_process_all_no_actions(self, tmp_path, capsys):
+        """process-all with no pending actions succeeds with zero executed."""
+        from inline_relay_mcp.cli import main
+
+        test_file = tmp_path / "test.swift"
+        test_file.write_text("// AUTHOR: Just a question?\nlet x = 1\n")
+
+        code = main(["process-all", str(test_file)])
+        out = json.loads(capsys.readouterr().out)
+
+        assert code == 0
+        assert out["actions_executed"] == 0
+
+    def test_no_subcommand_errors(self):
+        """Invoking with no subcommand exits (argparse required=True)."""
+        from inline_relay_mcp.cli import main
+
+        with pytest.raises(SystemExit):
+            main([])
