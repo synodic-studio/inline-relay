@@ -11,7 +11,7 @@ if [ -f ".venv/bin/python" ]; then
 elif [ -f "venv/bin/python" ]; then
     PYTHON="venv/bin/python"
 else
-    echo "Error: No virtual environment found. Create one with 'uv venv && uv pip install -e .[dev]'"
+    echo "Error: No virtual environment found. Create one with 'uv sync --extra dev'"
     exit 1
 fi
 
