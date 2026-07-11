@@ -1,5 +1,5 @@
 [project]
-name = "inline-relay-mcp"
+name = "inline-relay"
 version = "0.1.4"
 description = "AUTHOR/AGENT inline code review threads - CLI and edit guards"
 readme = "README.md"
@@ -12,7 +12,7 @@ dev = [
 ]
 
 [project.scripts]
-inline-relay = "inline_relay_mcp.cli:main"
+inline-relay = "inline_relay.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

@@ -21,7 +21,7 @@ wheels = [
 ]
 
 [[package]]
-name = "inline-relay-mcp"
+name = "inline-relay"
 version = "0.1.4"
 source = { editable = "." }
 

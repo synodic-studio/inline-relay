@@ -1,4 +1,4 @@
-"""Entry point for ``python -m inline_relay_mcp``."""
+"""Entry point for ``python -m inline_relay``."""
 
 import sys
 

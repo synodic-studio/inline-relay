@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from inline_relay_mcp.core import (
+from inline_relay.core import (
     DASH_COMMENT_EXTENSIONS,
     HASH_COMMENT_EXTENSIONS,
     INLINE_AUTHOR_PATTERN,
@@ -27,7 +27,7 @@ from inline_relay_mcp.core import (
     strip_empty_trailing_author,
     uses_slash_comments,
 )
-from inline_relay_mcp.actions import (
+from inline_relay.actions import (
     dismiss_thread as _dismiss_thread,
     get_threads as _get_threads,
     process_all_actions as _process_all_actions,
@@ -1175,7 +1175,7 @@ class TestPluginDirectoryProtection:
 
     def test_is_plugin_directory_detects_plugin(self, tmp_path):
         """Detects plugin directory by .claude-plugin/plugin.json."""
-        from inline_relay_mcp.core import is_plugin_directory
+        from inline_relay.core import is_plugin_directory
 
         # Create plugin structure
         plugin_dir = tmp_path / ".claude-plugin"
@@ -1187,13 +1187,13 @@ class TestPluginDirectoryProtection:
 
     def test_is_plugin_directory_non_plugin(self, tmp_path):
         """Regular directories are not detected as plugins."""
-        from inline_relay_mcp.core import is_plugin_directory
+        from inline_relay.core import is_plugin_directory
 
         assert is_plugin_directory(tmp_path) is False
 
     def test_find_all_threads_rejects_plugin_directory(self, tmp_path):
         """find_all_threads raises ValueError for plugin directories."""
-        from inline_relay_mcp.core import find_all_threads
+        from inline_relay.core import find_all_threads
 
         # Create plugin structure
         plugin_dir = tmp_path / ".claude-plugin"
@@ -1597,7 +1597,7 @@ class TestCLI:
 
     def test_get_threads_prints_json_and_exits_zero(self, tmp_path, capsys):
         """get-threads prints a JSON result and returns exit code 0."""
-        from inline_relay_mcp.cli import main
+        from inline_relay.cli import main
 
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: Review this?\nlet x = 1\n")
@@ -1611,7 +1611,7 @@ class TestCLI:
 
     def test_get_threads_missing_path_exits_one(self, tmp_path, capsys):
         """A logical error (missing path) prints JSON and returns exit code 1."""
-        from inline_relay_mcp.cli import main
+        from inline_relay.cli import main
 
         code = main(["get-threads", str(tmp_path / "nope")])
         out = json.loads(capsys.readouterr().out)
@@ -1621,7 +1621,7 @@ class TestCLI:
 
     def test_respond_via_response_file(self, tmp_path, capsys):
         """respond reads response text from --response-file."""
-        from inline_relay_mcp.cli import main
+        from inline_relay.cli import main
 
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: Fix this?\nlet x = 1\n")
@@ -1644,7 +1644,7 @@ class TestCLI:
 
     def test_respond_via_stdin(self, tmp_path, capsys, monkeypatch):
         """respond reads from stdin when --response-file is omitted."""
-        from inline_relay_mcp.cli import main
+        from inline_relay.cli import main
 
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: Fix this?\nlet x = 1\n")
@@ -1661,7 +1661,7 @@ class TestCLI:
 
     def test_respond_no_input_on_tty_errors(self, tmp_path, monkeypatch):
         """respond with no response and an interactive tty raises SystemExit."""
-        from inline_relay_mcp.cli import main
+        from inline_relay.cli import main
 
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: Fix this?\nlet x = 1\n")
@@ -1678,7 +1678,7 @@ class TestCLI:
 
     def test_dismiss_bad_id_exits_one(self, tmp_path, capsys):
         """dismiss with an unknown id returns exit code 1."""
-        from inline_relay_mcp.cli import main
+        from inline_relay.cli import main
 
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: Fix this?\nlet x = 1\n")
@@ -1691,7 +1691,7 @@ class TestCLI:
 
     def test_clear_commit_missing_file_exits_one(self, tmp_path, capsys):
         """clear-commit on a missing file returns exit code 1."""
-        from inline_relay_mcp.cli import main
+        from inline_relay.cli import main
 
         code = main(["clear-commit", "--file", str(tmp_path / "nope.swift")])
         out = json.loads(capsys.readouterr().out)
@@ -1701,7 +1701,7 @@ class TestCLI:
 
     def test_process_all_no_actions(self, tmp_path, capsys):
         """process-all with no pending actions succeeds with zero executed."""
-        from inline_relay_mcp.cli import main
+        from inline_relay.cli import main
 
         test_file = tmp_path / "test.swift"
         test_file.write_text("// AUTHOR: Just a question?\nlet x = 1\n")
@@ -1714,7 +1714,7 @@ class TestCLI:
 
     def test_no_subcommand_errors(self):
         """Invoking with no subcommand exits (argparse required=True)."""
-        from inline_relay_mcp.cli import main
+        from inline_relay.cli import main
 
         with pytest.raises(SystemExit):
             main([])

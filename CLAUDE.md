@@ -18,16 +18,13 @@ uv run inline-relay get-threads .   # Run the CLI (subcommands: get-threads,
 
 ## Architecture
 
-- `src/inline_relay_mcp/core.py` - Thread detection, normalization, ID computation, SQLite event log
-- `src/inline_relay_mcp/actions.py` - Thread operations (get/respond/dismiss/clear-commit/process-all) as plain functions
-- `src/inline_relay_mcp/cli.py` + `__main__.py` - argparse CLI wrapping `actions`; prints JSON, exits non-zero on failure
+- `src/inline_relay/core.py` - Thread detection, normalization, ID computation, SQLite event log
+- `src/inline_relay/actions.py` - Thread operations (get/respond/dismiss/clear-commit/process-all) as plain functions
+- `src/inline_relay/cli.py` + `__main__.py` - argparse CLI wrapping `actions`; prints JSON, exits non-zero on failure
 - `hooks/pre_tool_use.py` - Edit guards protecting thread markers
 - `tests/test_server.py` - All tests (organized by class)
 - `commands/process.md` - `/inline-relay:process` entry point
 - `skills/inline-relay-workflow/SKILL.md` - Behavioral guidance + CLI invocation
-
-Note: the `inline_relay_mcp` package name is a historical holdover from the MCP
-era and will be renamed; the tool is a CLI now, not an MCP server.
 
 ## Critical: Verify Before Claiming
 
