@@ -7,13 +7,9 @@ from pathlib import Path
 import pytest
 
 from inline_relay.core import (
-    DASH_COMMENT_EXTENSIONS,
-    HASH_COMMENT_EXTENSIONS,
     INLINE_AUTHOR_PATTERN,
     SALT_PATTERN,
-    SLASH_COMMENT_EXTENSIONS,
     compute_thread_id,
-    detect_action_command,
     find_all_threads,
     find_git_root,
     find_thread_by_id,
