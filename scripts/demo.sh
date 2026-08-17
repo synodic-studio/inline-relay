@@ -230,8 +230,9 @@ fi
 # The hook fails open: if it crashes, Claude Code reads the non-zero exit as a
 # hook error and runs the edit anyway. So prove here, under the same python3
 # beat 2 will use, that a marker edit actually comes back denied.
-# AUTHOR: " \
-SELFTEST="$(printf '{"hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"/nonexistent/x.py","old_string":"%s q","new_string":""}}' "
+MARKER="#"" AUTHOR:"
+MARKER_AGENT="#"" AGENT:"
+SELFTEST="$(printf '{"hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"/nonexistent/x.py","old_string":"%s q","new_string":""}}' "$MARKER" \
     | python3 "$HOOK" 2>&1 | tr -d ' \n')"
 case "$SELFTEST" in
     *'"permissionDecision":"deny"'*) GUARD_LIVE="deny (as expected)" ;;
@@ -373,10 +374,12 @@ advance "press when you have made the point that ordinary edits are untouched"
 
 echo
 printf '%s%s(b) the same tool, the same file, aimed at the thread marker%s\n' "$B" "$C" "$R"
+# Built from $MARKER rather than written out: a literal marker sitting after
+# code on one line is exactly what the CLI's normalizer rewrites, and this file
+# lives in a repo people scan.
 make_payload "$WORK/edit-b.json" "Edit" "$SRC_FILE" \
-# AUTHOR: Should this retry on 500s, or is that the caller'"'"'s job?' \
-    '
-    '    # AGENT: Yes, added a retry.'
+    "    $MARKER Should this retry on 500s, or is that the caller's job?" \
+    "    $MARKER_AGENT Yes, added a retry."
 show "cat edit-b.json"
 cat "$WORK/edit-b.json"
 echo
