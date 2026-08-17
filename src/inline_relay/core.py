@@ -46,10 +46,10 @@ _EXTENSION_TO_PREFIX = {
 
 # Exact command patterns that require immediate action (no response)
 ACTION_COMMANDS = {
-    "done": ("dismiss_thread", "Thread complete. Call dismiss_thread(thread_id, path) immediately."),
-    "commit": ("clear_and_commit", "Commit requested. Call clear_and_commit(file) immediately."),
-    "commit file": ("clear_and_commit", "Commit requested. Call clear_and_commit(file) immediately."),
-    "reset": ("dismiss_thread", "Reset requested. Call dismiss_thread(thread_id, path) immediately."),
+    "done": ("dismiss_thread", "Thread complete. Run `inline-relay dismiss --id ID --path PATH` immediately."),
+    "commit": ("clear_and_commit", "Commit requested. Run `inline-relay clear-commit --file FILE` immediately."),
+    "commit file": ("clear_and_commit", "Commit requested. Run `inline-relay clear-commit --file FILE` immediately."),
+    "reset": ("dismiss_thread", "Reset requested. Run `inline-relay dismiss --id ID --path PATH` immediately."),
 }
 
 
@@ -342,7 +342,7 @@ def find_threads_in_file(file_path: Path) -> list[dict]:
                 else:
                     # Add guidance for regular responses (not commands)
                     thread_data["response_note"] = (
-                        "Complete requested code changes BEFORE calling respond_to_thread. "
+                        "Complete requested code changes BEFORE running `inline-relay respond`. "
                         "Your response is a receipt for completed work. Use past tense."
                     )
 
@@ -386,7 +386,7 @@ def find_threads_in_file(file_path: Path) -> list[dict]:
             else:
                 # Add guidance for regular responses (not commands)
                 thread_data["response_note"] = (
-                    "Complete requested code changes BEFORE calling respond_to_thread. "
+                    "Complete requested code changes BEFORE running `inline-relay respond`. "
                     "Your response is a receipt for completed work. Use past tense."
                 )
 
@@ -660,5 +660,6 @@ def log_thread_event(
         conn.close()
         return True
     except Exception:
-        # Silent failure - don't disrupt MCP tool operation
+        # Silent failure - the event log is observability, never a reason to
+        # fail a thread operation the caller already asked for.
         return False

@@ -2,14 +2,19 @@
 """
 Pre-tool-use hook for inline-relay thread edit guards.
 
-Detects and BLOCKS edits that could corrupt AUTHOR/AGENT thread structure:
+Detects and DENIES edits that could corrupt AUTHOR/AGENT thread structure:
 1. Any Edit that touches thread markers (in old_string or new_string)
 2. Any Write to a file that contains thread markers
 
-Thread markers are READ-ONLY. Use MCP tools to modify them.
+Thread markers are READ-ONLY to the general-purpose edit tools. Every marker
+change routes through the `inline-relay` CLI instead.
 
-ESCAPE HATCH: Set environment variable INLINE_DIALOGUE_ALLOW_DESTRUCTIVE=1
-to bypass blocking (for emergencies when MCP is broken).
+Protocol: a denial is exit 0 plus a `hookSpecificOutput.permissionDecision`
+of "deny" on stdout. A non-zero exit is a *non-blocking* hook error to Claude
+Code, so exiting non-zero here would silently let the edit through.
+
+ESCAPE HATCH: Set environment variable INLINE_RELAY_ALLOW_DESTRUCTIVE=1
+to bypass the guard (for emergencies when the CLI is broken).
 """
 
 import json
@@ -19,7 +24,7 @@ import sys
 
 def is_bypass_enabled() -> bool:
     """Check if destructive edit bypass is enabled via environment variable."""
-    return os.environ.get("INLINE_DIALOGUE_ALLOW_DESTRUCTIVE", "").strip() == "1"
+    return os.environ.get("INLINE_RELAY_ALLOW_DESTRUCTIVE", "").strip() == "1"
 
 
 def get_plugin_root() -> str | None:
@@ -91,6 +96,26 @@ def emit_warning(message: str) -> None:
     print(message, file=sys.stderr)
 
 
+# The CLI is the only supported path for changing markers. Listed in the denial
+# so the reason doubles as the instruction for what to do instead.
+_CLI_ALTERNATIVES = (
+    "  inline-relay respond --id ID --path PATH   (answer a thread)\n"
+    "  inline-relay dismiss --id ID --path PATH   (close a resolved thread)\n"
+    "  inline-relay clear-commit --file FILE      (strip markers and commit)"
+)
+
+
+def deny(reason: str) -> dict:
+    """Build the PreToolUse payload that denies a tool call."""
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        }
+    }
+
+
 # All recognized thread marker prefixes (constructed to avoid literal markers in source)
 _COMMENT_PREFIXES = ["//", "#", "--"]
 _MARKER_ROLES = ["AUTHOR:", "AGENT:"]
@@ -106,8 +131,8 @@ def edit_touches_thread_markers(tool_input: dict) -> bool:
     """
     Detect Edit tool touching ANY thread markers (old or new string).
 
-    Thread markers are READ-ONLY. Any edit that involves them should be blocked.
-    Use MCP tools (respond_to_thread, dismiss_thread) instead.
+    Thread markers are READ-ONLY. Any edit that involves them is denied.
+    The `inline-relay` CLI is the only path that may change them.
 
     Args:
         tool_input: The tool's input parameters
@@ -125,45 +150,32 @@ def validate_thread_edit(tool_input: dict) -> dict | None:
     """
     Validate Edit tool operations for thread safety.
 
-    BLOCKS any edit that touches thread markers (in old_string or new_string).
+    DENIES any edit that touches thread markers (in old_string or new_string).
     Thread markers are completely read-only via Edit tool.
 
     Args:
         tool_input: The tool's input parameters
 
     Returns:
-        Block decision dict if touches threads, None if allowed
+        Deny payload if the edit touches threads, None if allowed
     """
     # Allow edits within the plugin itself (for development)
     file_path = tool_input.get("file_path", "")
     if is_within_plugin(file_path):
         return None
 
-    if edit_touches_thread_markers(tool_input):
-        emit_warning("=" * 60)
-        emit_warning("🚫 BLOCKED: Edit touches thread markers!")
-        emit_warning("")
-        emit_warning("Thread markers (// or # or -- AUTHOR:/AGENT:) are READ-ONLY.")
-        emit_warning("You cannot add, edit, or remove them via the Edit tool.")
-        emit_warning("")
-        emit_warning("Use the inline-relay MCP tools instead:")
-        emit_warning("  • respond_to_thread(thread_id, response, path)")
-        emit_warning("  • dismiss_thread(thread_id, path)")
-        emit_warning("  • clear_and_commit(file, message)")
-        emit_warning("=" * 60)
+    if not edit_touches_thread_markers(tool_input):
+        return None
 
-        if is_bypass_enabled():
-            emit_warning("")
-            emit_warning("⚠️  BYPASS ENABLED - allowing edit")
-            emit_warning("    (INLINE_DIALOGUE_ALLOW_DESTRUCTIVE=1)")
-            return None
+    if is_bypass_enabled():
+        emit_warning("inline-relay: marker edit allowed by INLINE_RELAY_ALLOW_DESTRUCTIVE=1")
+        return None
 
-        return {
-            "decision": "block",
-            "reason": "Edit touches AUTHOR/AGENT thread markers. Use MCP tools (respond_to_thread, dismiss_thread) instead."
-        }
-
-    return None
+    return deny(
+        "DENIED by inline-relay: this Edit touches AUTHOR/AGENT thread markers, "
+        "which are read-only to the Edit tool.\n"
+        "Route the change through the CLI instead:\n" + _CLI_ALTERNATIVES
+    )
 
 
 def file_has_thread_markers(file_path: str) -> bool:
@@ -193,14 +205,14 @@ def validate_write(tool_input: dict) -> dict | None:
     """
     Validate Write tool operations for thread safety.
 
-    BLOCKS any write to a file that currently contains thread markers.
+    DENIES any write to a file that currently contains thread markers.
     Thread files are completely read-only via Write tool.
 
     Args:
         tool_input: The tool's input parameters
 
     Returns:
-        Block decision dict if file has threads, None if allowed
+        Deny payload if the file has threads, None if allowed
     """
     file_path = tool_input.get("file_path", "")
 
@@ -208,57 +220,42 @@ def validate_write(tool_input: dict) -> dict | None:
     if is_within_plugin(file_path):
         return None
 
-    if file_has_thread_markers(file_path):
-        emit_warning("=" * 60)
-        emit_warning("🚫 BLOCKED: Write to file with thread markers!")
-        emit_warning("")
-        emit_warning("This file contains AUTHOR:/AGENT: thread markers.")
-        emit_warning("Files with thread markers are READ-ONLY via Write tool.")
-        emit_warning("")
-        emit_warning("Use the inline-relay MCP tools instead:")
-        emit_warning("  • respond_to_thread(thread_id, response, path)")
-        emit_warning("  • dismiss_thread(thread_id, path)")
-        emit_warning("  • clear_and_commit(file, message)")
-        emit_warning("=" * 60)
+    if not file_has_thread_markers(file_path):
+        return None
 
-        if is_bypass_enabled():
-            emit_warning("")
-            emit_warning("⚠️  BYPASS ENABLED - allowing write")
-            emit_warning("    (INLINE_DIALOGUE_ALLOW_DESTRUCTIVE=1)")
-            return None
+    if is_bypass_enabled():
+        emit_warning("inline-relay: marker overwrite allowed by INLINE_RELAY_ALLOW_DESTRUCTIVE=1")
+        return None
 
-        return {
-            "decision": "block",
-            "reason": "File contains AUTHOR/AGENT thread markers. Use MCP tools (respond_to_thread, dismiss_thread) instead."
-        }
+    return deny(
+        "DENIED by inline-relay: this file holds an open AUTHOR/AGENT review thread, "
+        "so a whole-file Write would silently destroy it.\n"
+        "Route the change through the CLI instead:\n" + _CLI_ALTERNATIVES
+    )
 
+
+def evaluate(hook_input: dict) -> dict | None:
+    """Return the deny payload for a hook input, or None to let the tool run."""
+    tool_name = hook_input.get("tool_name", "")
+    tool_input = hook_input.get("tool_input", {})
+
+    if tool_name == "Edit":
+        return validate_thread_edit(tool_input)
+    if tool_name == "Write":
+        return validate_write(tool_input)
     return None
 
 
 def main():
     """Process pre-tool-use hook for thread edit guards."""
-    # Read hook input from stdin
     hook_input = json.load(sys.stdin)
+    decision = evaluate(hook_input)
 
-    tool_name = hook_input.get("tool_name", "")
-    tool_input = hook_input.get("tool_input", {})
+    if decision:
+        print(json.dumps(decision, indent=2))
 
-    block_result = None
-
-    if tool_name == "Edit":
-        # Validate Edit tool operations
-        block_result = validate_thread_edit(tool_input)
-    elif tool_name == "Write":
-        # Validate Write tool operations
-        block_result = validate_write(tool_input)
-
-    if block_result:
-        # Destructive operation detected - block it
-        print(json.dumps(block_result))
-        return 1
-
-    # Allow the operation
-    print(json.dumps({"decision": "approve"}))
+    # Always exit 0: Claude Code only reads this JSON on a zero exit. A non-zero
+    # exit is treated as a hook error and the edit proceeds.
     return 0
 
 

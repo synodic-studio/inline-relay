@@ -64,7 +64,6 @@ Tests go in `tests/test_server.py`, following existing class organization:
 - `TestFeatureName` - Group related tests
 - `test_specific_behavior` - Descriptive test method names
 - Use `tmp_path` fixture for file operations
-- Use `mock_ctx` fixture for MCP context
 
 ### Completion Checklist
 
@@ -100,6 +99,8 @@ class TestNewFeature:
 
 ## File Safety
 
-- **Never use Write tool** on files containing thread markers (use Edit)
-- Thread markers (`// AUTHOR:`, `// AGENT:`) are protected by hooks
+- Thread markers (`// AUTHOR:`, `// AGENT:`) are read-only to Edit and Write. The `PreToolUse` hook in `hooks/hooks.json` denies both.
 - Use the `inline-relay` CLI (`respond`, `dismiss`, `clear-commit`, `process-all`) for thread operations
+- The guard denies with exit 0 plus `hookSpecificOutput.permissionDecision: "deny"`. A non-zero exit reads as a hook error to Claude Code and the edit goes through, so the exit code is load-bearing.
+- `INLINE_RELAY_ALLOW_DESTRUCTIVE=1` bypasses the guard
+- Edits to files inside the plugin repo itself are exempt, so its own docs and tests can hold example markers

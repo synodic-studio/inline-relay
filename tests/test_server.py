@@ -1714,3 +1714,132 @@ class TestCLI:
 
         with pytest.raises(SystemExit):
             main([])
+
+
+class TestHookDenyContract:
+    """Tests for the PreToolUse deny protocol the hook must speak.
+
+    Claude Code only reads a hook's stdout on a zero exit, and only honors a
+    `hookSpecificOutput.permissionDecision` of "deny". A regression in either
+    half turns the guard into a no-op that still looks like it is working.
+    """
+
+    def _payload(self, tool_name, tool_input):
+        return {"hook_event_name": "PreToolUse", "tool_name": tool_name, "tool_input": tool_input}
+
+    def test_marker_edit_is_denied(self, tmp_path):
+        """An Edit touching a marker returns a deny decision."""
+        from hooks.pre_tool_use import evaluate
+
+        target = tmp_path / "app.py"
+        target.write_text(f"{_HASH_AUTHOR} question\n")
+        decision = evaluate(self._payload("Edit", {
+            "file_path": str(target),
+            "old_string": f"{_HASH_AGENT} old",
+            "new_string": f"{_HASH_AGENT} new",
+        }))
+
+        assert decision is not None
+        out = decision["hookSpecificOutput"]
+        assert out["hookEventName"] == "PreToolUse"
+        assert out["permissionDecision"] == "deny"
+        assert "inline-relay respond" in out["permissionDecisionReason"]
+
+    def test_write_over_thread_file_is_denied(self, tmp_path):
+        """A Write to a file holding a thread returns a deny decision."""
+        from hooks.pre_tool_use import evaluate
+
+        target = tmp_path / "app.py"
+        target.write_text(f"{_HASH_AUTHOR} question\nx = 1\n")
+        decision = evaluate(self._payload("Write", {
+            "file_path": str(target),
+            "content": "x = 2\n",
+        }))
+
+        assert decision["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    def test_edit_away_from_markers_is_allowed(self, tmp_path):
+        """An Edit that never mentions a marker passes through."""
+        from hooks.pre_tool_use import evaluate
+
+        target = tmp_path / "app.py"
+        target.write_text(f"{_HASH_AUTHOR} question\nx = 1\n")
+        decision = evaluate(self._payload("Edit", {
+            "file_path": str(target),
+            "old_string": "x = 1",
+            "new_string": "x = 2",
+        }))
+
+        assert decision is None
+
+    def test_unrelated_tool_is_ignored(self):
+        """Tools other than Edit/Write are never denied."""
+        from hooks.pre_tool_use import evaluate
+
+        assert evaluate(self._payload("Bash", {"command": "ls"})) is None
+
+    def test_bypass_env_var_allows_marker_edit(self, tmp_path, monkeypatch):
+        """The documented escape hatch disables the guard."""
+        from hooks.pre_tool_use import evaluate
+
+        monkeypatch.setenv("INLINE_RELAY_ALLOW_DESTRUCTIVE", "1")
+        target = tmp_path / "app.py"
+        target.write_text(f"{_HASH_AUTHOR} question\n")
+        decision = evaluate(self._payload("Edit", {
+            "file_path": str(target),
+            "old_string": f"{_HASH_AUTHOR} question",
+            "new_string": "",
+        }))
+
+        assert decision is None
+
+    def test_deny_exits_zero_and_prints_decision(self, tmp_path, monkeypatch, capsys):
+        """main() prints the deny payload and still exits 0."""
+        import json as _json
+
+        from hooks import pre_tool_use
+
+        target = tmp_path / "app.py"
+        target.write_text(f"{_HASH_AUTHOR} question\n")
+        payload = _json.dumps(self._payload("Edit", {
+            "file_path": str(target),
+            "old_string": f"{_HASH_AUTHOR} question",
+            "new_string": "gone",
+        }))
+        monkeypatch.setattr("sys.stdin", io.StringIO(payload))
+
+        assert pre_tool_use.main() == 0
+        emitted = _json.loads(capsys.readouterr().out)
+        assert emitted["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    def test_allow_prints_nothing(self, tmp_path, monkeypatch, capsys):
+        """An allowed tool call produces no stdout, so normal permissions apply."""
+        import json as _json
+
+        from hooks import pre_tool_use
+
+        payload = _json.dumps(self._payload("Edit", {
+            "file_path": str(tmp_path / "app.py"),
+            "old_string": "x = 1",
+            "new_string": "x = 2",
+        }))
+        monkeypatch.setattr("sys.stdin", io.StringIO(payload))
+
+        assert pre_tool_use.main() == 0
+        assert capsys.readouterr().out == ""
+
+
+class TestHookRegistration:
+    """The guard is only real if the plugin actually registers it."""
+
+    def test_pre_tool_use_registered_for_edit_and_write(self):
+        """hooks.json wires pre_tool_use.py to the Edit and Write tools."""
+        import json as _json
+
+        manifest = _json.loads((Path(__file__).parent.parent / "hooks" / "hooks.json").read_text())
+        entries = manifest["hooks"]["PreToolUse"]
+        matchers = [entry["matcher"] for entry in entries]
+        commands = [h["command"] for entry in entries for h in entry["hooks"]]
+
+        assert any("Edit" in m and "Write" in m for m in matchers)
+        assert any("pre_tool_use.py" in c for c in commands)

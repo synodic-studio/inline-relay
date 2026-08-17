@@ -1,9 +1,9 @@
 """Thread operations for inline-relay.
 
 These are plain, synchronous functions operating on files, git, and the
-SQLite event log. They contain all the logic that the CLI (and previously the
-MCP server) exposes. Nothing here depends on a running server or an MCP
-context -- paths are resolved against the current working directory.
+SQLite event log. They contain all the logic the CLI exposes. Nothing here
+depends on a running server -- paths are resolved against the current working
+directory.
 """
 
 import re
