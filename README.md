@@ -38,6 +38,16 @@ The trailing empty comment is a cursor for your next reply. When you write text 
 
 Add to your Claude Code plugins via the synodic-studio marketplace, or run `claude plugins add` against this repo.
 
+## See it work
+
+```bash
+./scripts/demo.sh            # four beats, one keypress between each
+./scripts/demo.sh --auto     # start to finish, no interaction
+./scripts/demo.sh --cleanup  # remove the scratch repo it created
+```
+
+It builds a throwaway git repo under `/tmp`, puts a real review thread in a source file, feeds the hook the same PreToolUse payload Claude Code would send, and shows it deny a marker edit and then allow the same change through the CLI. `-h` prints the beat list.
+
 ## Notes
 
 Thread IDs are content-addressable (`SHA256(file_path + first_comment_text)[:8]`), so threads survive line drift from edits above them. Future-tense responses ("I will fix this") are blocked at format-check time, because the agent should do the work first and respond with what it actually did.

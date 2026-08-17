@@ -17,6 +17,12 @@ ESCAPE HATCH: Set environment variable INLINE_RELAY_ALLOW_DESTRUCTIVE=1
 to bypass the guard (for emergencies when the CLI is broken).
 """
 
+# The hook runs under whatever `python3` the machine resolves, which is often
+# the 3.9 that ships with macOS. Without this, the `X | None` annotations below
+# raise at import time, the hook exits non-zero, and Claude Code reads that as a
+# hook error and lets the edit through -- the guard fails open, silently.
+from __future__ import annotations
+
 import json
 import os
 import sys

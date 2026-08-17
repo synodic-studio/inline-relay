@@ -14,6 +14,8 @@ uv run pytest -x                 # Stop on first failure
 uv run pytest -k "test_name"     # Run specific test
 uv run inline-relay get-threads .   # Run the CLI (subcommands: get-threads,
                                     # respond, dismiss, clear-commit, process-all)
+./scripts/demo.sh --auto         # End-to-end smoke test in a throwaway /tmp repo
+./scripts/demo.sh --cleanup      # Remove what the demo created
 ```
 
 ## Architecture
@@ -21,7 +23,9 @@ uv run inline-relay get-threads .   # Run the CLI (subcommands: get-threads,
 - `src/inline_relay/core.py` - Thread detection, normalization, ID computation, SQLite event log
 - `src/inline_relay/actions.py` - Thread operations (get/respond/dismiss/clear-commit/process-all) as plain functions
 - `src/inline_relay/cli.py` + `__main__.py` - argparse CLI wrapping `actions`; prints JSON, exits non-zero on failure
-- `hooks/pre_tool_use.py` - Edit guards protecting thread markers
+- `hooks/pre_tool_use.py` - PreToolUse guard denying Edit/Write on thread markers
+- `hooks/hooks.json` - Hook registration (PreToolUse on `Edit|Write`, Stop)
+- `scripts/demo.sh` - Live walkthrough of the whole loop; doubles as a smoke test
 - `tests/test_server.py` - All tests (organized by class)
 - `commands/process.md` - `/inline-relay:process` entry point
 - `skills/inline-relay-workflow/SKILL.md` - Behavioral guidance + CLI invocation
