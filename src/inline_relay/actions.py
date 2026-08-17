@@ -18,6 +18,7 @@ from .core import (
     find_git_root,
     find_thread_by_id,
     find_thread_location,
+    is_plugin_directory,
     log_thread_event,
     normalize_all_inline_comments,
     salt_duplicate_threads,
@@ -42,6 +43,16 @@ def get_threads(path: str) -> dict:
     search_path = resolve_path(path)
     if not search_path.exists():
         return {"error": f"Path not found: {path}"}
+
+    # Refuse before normalizing, not after. Normalization rewrites every file it
+    # touches, so running it first meant a refused scan still edited the tree.
+    if is_plugin_directory(search_path):
+        return {
+            "error": (
+                f"Refusing to scan plugin directory: {search_path}. "
+                "Thread scanning should target project files, not plugin internals."
+            )
+        }
 
     # Normalize inline AUTHOR comments (move to own line)
     normalized_files = normalize_all_inline_comments(search_path)
@@ -424,6 +435,15 @@ def process_all_actions(path: str) -> dict:
     search_path = resolve_path(path)
     if not search_path.exists():
         return {"error": f"Path not found: {path}"}
+
+    # Same ordering rule as get_threads: refuse before touching any file.
+    if is_plugin_directory(search_path):
+        return {
+            "error": (
+                f"Refusing to scan plugin directory: {search_path}. "
+                "Thread scanning should target project files, not plugin internals."
+            )
+        }
 
     normalize_all_inline_comments(search_path)
 

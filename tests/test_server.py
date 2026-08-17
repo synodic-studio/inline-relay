@@ -942,14 +942,16 @@ class TestOtherThreadsNotification:
 
         assert "other_threads" not in result
 
-    def test_no_other_threads_when_scanning_root(self):
-        """No other_threads when scanning entire repo root."""
-        # Use actual project directory (the repo root)
-        project_dir = Path(__file__).parent.parent
+    def test_no_other_threads_when_scanning_repo_root(self, tmp_path):
+        """No other_threads when the scan already covers the whole repo."""
+        import subprocess
 
-        result = _get_threads(str(project_dir))
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        (tmp_path / "app.py").write_text(f"{_HASH_AUTHOR} Question?\ndef foo(): pass\n")
 
-        # When scanning root, there shouldn't be "other" threads
+        result = _get_threads(str(tmp_path))
+
+        assert len(result["threads"]) == 1
         assert "other_threads" not in result
 
 
@@ -1843,3 +1845,40 @@ class TestHookRegistration:
 
         assert any("Edit" in m and "Write" in m for m in matchers)
         assert any("pre_tool_use.py" in c for c in commands)
+
+
+class TestPluginDirectoryIsNeverRewritten:
+    """A refused scan must not have touched the tree on its way to refusing.
+
+    get_threads normalizes inline AUTHOR comments by rewriting files. Running
+    that before the plugin-directory check meant `inline-relay get-threads .`
+    inside the plugin -- or the test suite doing the same -- silently edited
+    source files and then reported an error.
+    """
+
+    def _make_plugin_dir(self, tmp_path):
+        (tmp_path / ".claude-plugin").mkdir()
+        (tmp_path / ".claude-plugin" / "plugin.json").write_text('{"name": "some-plugin"}')
+        target = tmp_path / "script.sh"
+        target.write_text(f'x=1  {_HASH_AUTHOR} inline marker in a code line\n')
+        return target
+
+    def test_get_threads_refuses_without_editing(self, tmp_path):
+        """get_threads on a plugin dir errors and leaves files byte-identical."""
+        target = self._make_plugin_dir(tmp_path)
+        before = target.read_text()
+
+        result = _get_threads(str(tmp_path))
+
+        assert "Refusing to scan plugin directory" in result["error"]
+        assert target.read_text() == before
+
+    def test_process_all_refuses_without_editing(self, tmp_path):
+        """process_all_actions on a plugin dir errors and edits nothing."""
+        target = self._make_plugin_dir(tmp_path)
+        before = target.read_text()
+
+        result = _process_all_actions(str(tmp_path))
+
+        assert "Refusing to scan plugin directory" in result["error"]
+        assert target.read_text() == before
